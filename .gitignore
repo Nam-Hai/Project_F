@@ -1,0 +1,4 @@
+build/
+*.wav
+!samples/**/*.wav
+.DS_Store

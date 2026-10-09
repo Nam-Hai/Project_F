@@ -1,37 +1,48 @@
 # Feuille de Route Technique & Architecture Logicielle
 
+> **Périmètre actuel : drum machine à base de samples.** La synthèse percussive (kick, snare, hi-hat synthétiques) est **mise en sommeil** : le code du kick existe (`core/synth_kick.*`) mais on ne s'en occupe plus pour l'instant. Voir `plan_poc_desktop.md` pour l'état d'avancement du POC PC.
+
 ## 1. Architecture Logicielle Globale
 
-L'architecture est découpée en trois couches strictes afin de garantir le respect des contraintes temps réel.
+L'architecture est découpée en couches strictes afin de garantir le respect des contraintes temps réel. Le `core/` est portable (PC et Teensy) ; seules les couches « plateforme » changent.
 
 ```
        +-------------------------------------------------------+
        |               COUCHE APPLICATIVE (UI & SD)            |
-       |  - Gestion des boutons / encodeurs / écran OLED       |
-       |  - Lecteur de fichiers WAV sur carte SD -> RAM        |
+       |  - Entrées : boutons / encodeurs / potards            |
+       |  - Écran : vue réelle (sélection de samples, etc.)    |
+       |  - Chargement des WAV (SD sur Teensy, disque sur PC)  |
        +-------------------------------------------------------+
                                   |
-                                  v  (Écriture dans structures de contrôle)
+                                  v  (Commandes via file SPSC)
        +-------------------------------------------------------+
-       |               COUCHE SÉQUENCEUR (TIMERS)              |
-       |  - IntervalTimer @ BPM dynamique                      |
-       |  - Déclenchement des trigs (Kick, Snare, Hats, Sample) |
+       |               COUCHE SÉQUENCEUR (HORLOGE)             |
+       |  - Horloge de pas au compteur d'échantillons          |
+       |  - Déclenchement des trigs (une piste = un sample)    |
        +-------------------------------------------------------+
                                   |
                                   v  (Appels de fonctions Trigger)
        +-------------------------------------------------------+
        |               COUCHE MOTEUR AUDIO (DSP)               |
-       |  - I2S + DMA Callback (Double Buffer)                 |
-       |  - Oscillateurs, Enveloppes, Filtres, Interpolation   |
+       |  - I2S + DMA (Teensy) / miniaudio (PC)                |
+       |  - Lecteur de samples, pitch, interpolation           |
        |  - Mixeur Float32 + Soft-Clipping (tanh)              |
        +-------------------------------------------------------+
 ```
 
+**Choix d'architecture actés :**
+* Séquenceur piloté par le **compteur d'échantillons**, pas par un `IntervalTimer` (pas de jitter, pas de dérive, testable hors ligne). Le timer reste utile sur Teensy pour la MIDI clock et les tâches UI.
+* Sortie I2S sur Teensy via **`AudioOutputI2S`** de la Teensy Audio Library (pilote seulement ; le DSP reste maison). Conséquences : blocs de **128** échantillons, sortie `int16` stéréo, 44,1 kHz.
+* Communication UI -> moteur par **file de commandes lock-free** ; état du moteur relu par l'UI via `EngineState`.
+
 ---
 
-## 2. Modélisation Mathématique des Synthétiseurs Percussifs
+## 2. Modélisation Mathématique
 
-### A. Synthétiseur de Kick (Grosse Caisse)
+### A. Synthèse percussive (EN SOMMEIL)
+Les formules ci-dessous restent valables mais ne sont plus au programme. Seul le kick est implémenté (`SynthKick`).
+
+#### Synthétiseur de Kick (Grosse Caisse)
 Un kick analogique/numérique se compose d'un oscillateur sinusoïdal dont la fréquence décroît de manière exponentielle, modulé par une enveloppe d'amplitude exponentielle.
 
 1. **Fréquence instantanée $f(t)$ :**
@@ -48,21 +59,17 @@ Un kick analogique/numérique se compose d'un oscillateur sinusoïdal dont la fr
 4. **Échantillon de Sortie :**
    $$y_{\text{kick}}[n] = A[n] \cdot \sin(\theta[n])$$
 
----
-
-### B. Synthétiseur de Snare (Caisse Claire)
-La caisse claire est la combinaison du timbre du fût (oscillateur sinusoïdal) et du timbre du timbre métallique sous le fût (bruit blanc filtré).
+#### Synthétiseur de Snare (Caisse Claire) : non implémenté
+La caisse claire est la combinaison du timbre du fût (oscillateur sinusoïdal) et du timbre métallique sous le fût (bruit blanc filtré).
 
 $$y_{\text{snare}}[n] = w_{\text{body}} \cdot (A_{\text{body}}[n] \cdot \sin(\theta[n])) + w_{\text{noise}} \cdot (A_{\text{noise}}[n] \cdot \text{Filter}_{\text{BP}}(\text{Noise}[n]))$$
 
-* **Bruit blanc :** Générateur congruentiel linéaire rapide :
-  $$\text{Noise}[n] = 2.0 \cdot \left( \frac{\text{rand()}}{\text{RAND\_MAX}} \right) - 1.0$$
-* **Filtre Passe-Bande (IIR 1er ordre) :**
-  $$y_f[n] = b_0 \cdot x[n] - a_1 \cdot y_f[n-1]$$
+* **Bruit blanc :** générateur congruentiel linéaire (ou xorshift) maison, sans `rand()` dans le callback.
+* **Filtre passe-bande :** un IIR du 1er ordre ne peut pas être passe-bande ; utiliser un biquad ou deux filtres du 1er ordre en cascade.
 
 ---
 
-### C. Lecteur de Samples avec Interpolation Liéneaire
+### B. Lecteur de Samples avec Interpolation Linéaire (IMPLÉMENTÉ)
 Pour modifier le pitch d'un sample stocké dans un tableau $S[k]$ sans aliasing excessif :
 
 1. **Accumulateur de Position Flottante $P[n]$ :**
@@ -73,9 +80,11 @@ Pour modifier le pitch d'un sample stocké dans un tableau $S[k]$ sans aliasing 
    Soit $i = \lfloor P[n] \rfloor$ l'indice entier et $\alpha = P[n] - i$ la partie fractionnaire :
    $$y_{\text{sample}}[n] = S[i] + \alpha \cdot (S[i+1] - S[i])$$
 
+   L'implémentation sépare l'index entier et la fraction pour ne pas perdre de précision sur les longs samples.
+
 ---
 
-### D. Mixage & Saturation Douce (Soft Clipping)
+### C. Mixage & Saturation Douce (Soft Clipping) (IMPLÉMENTÉ)
 La somme des $M$ voies produit une valeur $X[n] = \sum_{m=1}^{M} y_m[n]$.
 Pour éviter le clipping numérique tout en ajoutant une chaleur harmonique :
 
@@ -85,58 +94,76 @@ $$Y[n] = \tanh(X[n] \cdot G_{\text{master}})$$
 
 ## 3. Structure des Fichiers du Code (Projet C++)
 
+Structure réelle du POC PC (détails dans `plan_poc_desktop.md`) :
+
 ```
-drum_machine/
-├── drum_machine.ino         # Point d'entrée principal (setup, loop)
-├── config.h                 # Paramètres globaux (Sample Rate, Buffer Size, Pins)
-├── audio/
-│   ├── audio_driver.h/.cpp  # Configuration I2S, DMA, interruptions hardware
-│   ├── dsp_utils.h          # Fonctions tanh, générateurs d'ondes, enveloppes
-│   ├── voice.h              # Interface abstraite des voies percussives
-│   ├── synth_kick.h/.cpp    # Module synthèse de Kick
-│   ├── synth_snare.h/.cpp   # Module synthèse de Snare
-│   ├── synth_hihat.h/.cpp   # Module synthèse de Hi-Hat (bruit HPF)
-│   ├── sample_player.h/.cpp # Lecteur de samples avec interpolation
-│   └── mixer.h/.cpp         # Sommation, gain master, soft clipping
-├── engine/
-│   ├── sequencer.h/.cpp     # Horloge 16 pas, gestion du BPM et des patterns
-│   └── sample_loader.h/.cpp # Parsing d'en-tête WAV et chargement SD -> RAM
-└── ui/
-    ├── controls.h/.cpp      # Lecture des boutons et potentiomètres
-    └── display.h/.cpp       # Affichage OLED (SSD1306/ST7789)
+Project_F/
+├── CMakeLists.txt
+├── config.h                    # SAMPLE_RATE, BLOCK (128), MAX_TRACKS, MAX_STEPS
+├── core/                       # PORTABLE (PC + Teensy), aucun include OS
+│   ├── engine.h/.cpp           # render(), commandes, séquenceur + voix + mixeur
+│   ├── sequencer.h/.cpp        # horloge au compteur d'échantillons, grille de pas
+│   ├── command.h               # Command + SpscQueue
+│   ├── engine_state.h          # état lu par l'UI
+│   ├── voice.h                 # interface des voies
+│   ├── sample_player.h/.cpp    # lecteur de samples (pitch, interpolation)
+│   ├── mixer.h/.cpp            # somme, gain master, soft clipping
+│   ├── dsp_utils.h
+│   ├── synth_kick.h/.cpp       # EN SOMMEIL
+│   └── ui/                     # À FAIRE : logique d'UI portable (voir §4, phase 6)
+├── platform/
+│   ├── desktop/                # PC : miniaudio, chargeur WAV, config de loop, émulateur d'UI
+│   └── teensy/                 # à venir : AudioStream + AudioOutputI2S, SD, écran, boutons
+├── samples/                    # WAV mono 16 bits 44,1 kHz
+├── tests/
+└── third_party/miniaudio.h
 ```
 
 ---
 
 ## 4. Feuille de Route d'Implémentation Pas à Pas
 
-### Phase 1 : "Hello World Audio" (Semaine 1)
+### Phase 1 : Sortie audio (POC PC) : FAIT
+* [x] Sinus 440 Hz via le callback audio sur PC (`tone_test`, miniaudio). *Écoute à valider.*
 * [ ] Interfacer la Teensy 4.1 et le module PCM5102A sur breadboard.
-* [ ] Configurer les registres I2S et le DMA sous Teensyduino.
-* [ ] Écrire le callback audio minimal générant une onde sinusoïdale pure à $440\text{ Hz}$ sans coupure ni bruit d'horloge.
+* [ ] Brancher `engine.render()` sur `AudioOutputI2S` (classe `AudioStream`, conversion `float` -> `int16`), sans coupure ni bruit d'horloge.
 
-### Phase 2 : Moteur de Synthèse Percussive (Semaines 2 & 3)
-* [ ] Coder la classe `SynthKick` (oscillateur sinus + pitch bend exponentiel + enveloppe).
-* [ ] Coder la classe `SynthSnare` (mixage sinus + bruit blanc filtré).
-* [ ] Coder la classe `SynthHiHat` (bruit blanc + filtre passe-haut $f_c \approx 7\text{ kHz}$).
-* [ ] Implémenter la fonction `Trigger()` déclenchant les enveloppes.
+### Phase 2 : Synthèse percussive : EN SOMMEIL
+* [x] `SynthKick` (sinus + pitch bend exponentiel + enveloppe), avec test.
+* [ ] `SynthSnare`, `SynthHiHat` : hors périmètre pour l'instant.
 
-### Phase 3 : Lecteur de Samples WAV en RAM (Semaine 4)
-* [ ] Écrire un parser léger pour en-têtes WAV ($44,1\text{ kHz}$, $16\text{ bits}$ mono).
-* [ ] Charger un fichier `.wav` depuis la carte MicroSD vers un tableau en RAM2 / PSRAM au démarrage.
-* [ ] Coder le moteur de lecture avec phase flottante et interpolation linéaire.
+### Phase 3 : Lecteur de Samples WAV (priorité actuelle)
+* [x] Parser WAV (PCM 16 bits, mono, 44,1 kHz ; refus explicite des autres formats).
+* [x] Chargement d'un `.wav` depuis le disque vers un tableau en RAM (PC).
+* [x] Moteur de lecture avec phase flottante et interpolation linéaire, pitch par piste.
+* [ ] Chargement depuis la carte microSD vers RAM2 / PSRAM au démarrage (Teensy).
+* [ ] Sélection du sample d'une piste depuis l'UI (liste des fichiers disponibles).
+* [ ] Conversion automatique des formats (stéréo, autre fréquence), si nécessaire.
 
-### Phase 4 : Mixeur & Traitement Dynamique (Semaine 5)
-* [ ] Implémenter le mixeur $N$ voies en $float32$.
-* [ ] Ajouter la fonction de saturation douce $\tanh(x)$ en sortie de bus.
-* [ ] Valider la charge CPU globale du callback audio (doit rester $< 30\%$ du temps processeur disponible).
+### Phase 4 : Mixeur & Traitement Dynamique
+* [x] Mixeur $N$ voies en $float32$ avec gain par piste.
+* [x] Saturation douce $\tanh(x)$ en sortie de bus.
+* [ ] Valider le rendu à l'écoute avec de vrais samples (headroom quand plusieurs pistes tombent ensemble).
+* [ ] Valider la charge CPU globale du callback audio sur Teensy (doit rester $< 30\%$ du temps disponible).
 
-### Phase 5 : Séquenceur & Horloge Temps Réel (Semaine 6)
-* [ ] Configurer un `IntervalTimer` pour générer les *ticks* de séquenceur réglables en BPM ($60$ à $200\text{ BPM}$).
-* [ ] Implémenter une structure de pattern 16 pas pour 4 pistes simultanées.
-* [ ] Relier le séquenceur aux triggers des synthétiseurs et du lecteur de sample.
+### Phase 5 : Séquenceur & Horloge Temps Réel : FAIT (PC)
+* [x] Horloge de pas au compteur d'échantillons, tempo réglable en BPM ($60$ à $200\text{ BPM}$ et au-delà, borné à $20$-$300$), trigs à l'échantillon près, sans dérive.
+* [x] Pattern de 16 pas, 16 pistes.
+* [x] Séquenceur relié aux voix (samples) par `Engine::trigger`.
+* [x] File de commandes (`SetBpm`, `SetStep`, `ToggleStep`, `SetTrackGain`, `Play`, `Stop`, `Trigger`).
+* [ ] Swing, vélocité par pas, longueur de pattern variable.
 
-### Phase 6 : Interface Utilisateur & Finitions (Semaines 7+)
-* [ ] Ajouter des boutons-poussoirs pour le déclenchement direct et le pas-à-pas.
-* [ ] Connecter un écran OLED (SPI/I2C) pour afficher le BPM et le kit actif.
+### Phase 6 : Interface Utilisateur (deux vues)
+L'UI est séparée en **logique portable** (`core/ui/`) et **deux vues** sur PC :
+
+* **Vue « écran »** : l'interface qui s'affichera réellement sur le petit écran du Teensy (sélection de samples, BPM, pistes, pas courant). Elle dessine dans une abstraction de framebuffer (`Canvas`) : fenêtre sur PC, SSD1306/ST7789 sur Teensy.
+* **Vue « matériel simulé »** (PC uniquement) : un faux panneau avec boutons, sliders et potards qui émule le hardware en attendant de le recevoir. Il produit des `InputEvent`.
+
+Flux : `InputEvent` (bouton, encodeur, potard) -> `UiController` -> `Command` -> moteur ; `EngineState` -> `UiController` -> `Canvas`.
+
+* [ ] Définir `InputEvent` (bouton pressé, encodeur tourné, potard modifié) et les identifiants de contrôles.
+* [ ] `UiController` portable : pages, curseur, sélection, génération des `Command`.
+* [ ] `Canvas` + vue écran (résolution et type d'écran à choisir).
+* [ ] Émulateur PC : fenêtre affichant le `Canvas` et le panneau de contrôles simulés.
+* [ ] Côté Teensy : lecture des boutons / encodeurs / potards (anti-rebond), pilote d'écran, mêmes `InputEvent`.
 * [ ] Finaliser l'étage de sortie analogique sur PCB ou carte à trous.

@@ -205,6 +205,9 @@ int main() {
         CHECK(lib.count() == 2 && std::string(lib.name(0)) == "Kick.WAV" && std::string(lib.name(1)) == "snare.wav",
               "bibliothèque : tri alphabétique insensible à la casse");
 
+        CHECK(lib.find("snare.wav") == 1 && lib.find("Kick.WAV") == 0 && lib.find("snare") == -1 && lib.find("stereo.wav") == -1,
+              "bibliothèque : find retrouve un sample par son nom exact");
+
         const int16_t* data = nullptr;
         uint32_t       len  = 0;
         CHECK(lib.load(1, data, len) && len == 3 && data[2] == 30, "bibliothèque : chargement dans la banque");

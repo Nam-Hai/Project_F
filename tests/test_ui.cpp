@@ -41,6 +41,11 @@ struct FakeLibrary : SampleLibrary {
 
     int         count() const override { return static_cast<int>(names.size()); }
     const char* name(int i) const override { return names[static_cast<std::size_t>(i)].c_str(); }
+    int         find(const char* f) const override {
+        for (std::size_t i = 0; i < names.size(); ++i)
+            if (names[i] == f) return static_cast<int>(i);
+        return -1;
+    }
     bool        load(int i, const int16_t*& d, uint32_t& length) override {
         if (fail_load) return false;
         ++loads;
@@ -104,10 +109,12 @@ int main() {
         Canvas got, ref;
         ui.render(got);
         ref.text(0, 0, "Pistes");
-        ref.text(Canvas::W - 6 - 4 - Canvas::text_width("120"), 0, "120");
+        const int bpm_x = Canvas::W - 6 - 4 - Canvas::text_width("120");
+        ref.text(bpm_x, 0, "120");
+        ref.text(bpm_x - 6 - Canvas::text_width("L*"), 0, "L*");  // loop jamais sauvegardée
         ref.rect(Canvas::W - 6, 0, 2, 7, true);
         ref.rect(Canvas::W - 3, 0, 2, 7, true);
-        CHECK(same_rows(got, ref, 0, 8), "en-tête : titre, BPM 120, icône pause");
+        CHECK(same_rows(got, ref, 0, 8), "en-tête : titre, L*, BPM 120, icône pause");
 
         // Dernière ligne de la liste : « + Ajouter piste ».
         ref.clear();
@@ -122,18 +129,18 @@ int main() {
         for (int i = 0; i < 10; ++i) ui.add_track("t.wav", static_cast<uint8_t>(i));  // 10 pistes + « Ajouter »
 
         ui.handle(InputEvent::wheel(-3));
-        CHECK(ui.cursor() == 0 && ui.scroll() == 0, "borne haute");
-        ui.handle(InputEvent::wheel(6));
+        CHECK(ui.cursor() == -1 && ui.scroll() == 0, "borne haute : la ligne de titre");
+        ui.handle(InputEvent::wheel(7));
         CHECK(ui.cursor() == 6 && ui.scroll() == 0, "dernière ligne visible sans défiler");
         ui.handle(InputEvent::wheel(1));
         CHECK(ui.cursor() == 7 && ui.scroll() == 1, "défilement vers le bas");
         ui.handle(InputEvent::wheel(100));
         CHECK(ui.cursor() == 10 && ui.scroll() == 4, "borne basse : « Ajouter piste »");
         ui.handle(InputEvent::wheel(-100));
-        CHECK(ui.cursor() == 0 && ui.scroll() == 0, "retour en haut");
+        CHECK(ui.cursor() == -1 && ui.scroll() == 0, "retour en haut, sur la ligne de titre");
 
         Canvas c;
-        ui.handle(InputEvent::wheel(10));
+        ui.handle(InputEvent::wheel(11));
         ui.render(c);
         Canvas ref;
         ref.rect(0, 7 * 8, 128, 8, true);
@@ -224,11 +231,11 @@ int main() {
         // Rendu : en-tête, puis les trois samples sans « .wav », le premier sélectionné.
         Canvas got, ref;
         ui.render(got);
-        ref.text(0, 0, "Ajouter piste");
+        ref.text(0, 0, "Samples");
         bool title_ok = true;
         for (int y = 0; y < 8; ++y)
-            for (int x = 0; x < 13 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
-        CHECK(title_ok, "titre « Ajouter piste »");
+            for (int x = 0; x < 7 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
+        CHECK(title_ok, "titre « Samples »");
         ref.clear();
         ref.rect(0, 8, 128, 8, true);
         ref.text(0, 8, " Clave", true);
@@ -481,11 +488,11 @@ int main() {
 
         Canvas got, ref;
         ui.render(got);
-        ref.text(0, 0, "Changer sample");
+        ref.text(0, 0, "Samples");
         bool title_ok = true;
         for (int y = 0; y < 8; ++y)
-            for (int x = 0; x < 14 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
-        CHECK(title_ok, "titre « Changer sample »");
+            for (int x = 0; x < 7 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
+        CHECK(title_ok, "le mode remplacement a le même titre « Samples »");
 
         feed(ui, {InputEvent::wheel(1)});
         ui.update(st, 1150);  // la roue s'est arrêtée : écoute du sample 1
@@ -593,6 +600,40 @@ int main() {
         CHECK(lib.discarded.size() == 1, "file pleine : le buffer d'écoute est rendu à la bibliothèque");
         feed(ui, {InputEvent::back()});
         CHECK(sink.sent.empty(), "l'écoute n'a pas démarré : pas de StopPreview");
+    }
+
+    // Titre trop long : coupé (16 caractères dans la plupart des vues), il ne touche jamais l'indicateur.
+    {
+        RecordingSink sink;
+        UiController  ui(sink);
+        ui.add_track("un_nom_de_fichier_beaucoup_trop_long.wav", 0);  // 19 caractères conservés
+
+        // Vue Menu : 16 caractères, comme les autres vues sans lettre de mode.
+        ui.handle(InputEvent::menu());
+        Canvas got, ref;
+        ui.render(got);
+        ref.text(0, 0, "un_nom_de_fichie");  // 16 caractères
+        bool title_ok = true;
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 16 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
+        CHECK(title_ok, "titre coupé à 16 caractères");
+
+        // Entre la fin du titre (96 px) et le BPM (à partir de 100 px) : rien.
+        bool gap_empty = true;
+        for (int y = 0; y < 8; ++y)
+            for (int x = 96; x < 100; ++x) gap_empty = gap_empty && !got.get_pixel(x, y);
+        CHECK(gap_empty, "le titre ne touche pas l'indicateur de droite");
+
+        // Vue Pattern : 13 caractères, pour laisser la place à la lettre du mode.
+        ui.handle(InputEvent::back());
+        ui.handle(InputEvent::ok());
+        ui.render(got);
+        ref.clear();
+        ref.text(0, 0, "un_nom_de_fic");
+        title_ok = true;
+        for (int y = 0; y < 8; ++y)
+            for (int x = 0; x < 13 * 6; ++x) title_ok = title_ok && got.get_pixel(x, y) == ref.get_pixel(x, y);
+        CHECK(title_ok, "vue Pattern : titre coupé à 13 caractères");
     }
 
     // Play / Stop.

@@ -4,9 +4,25 @@
 
 #include "../config.h"
 
-// Grille de pas : on[piste][pas] != 0 -> trig.
+// Grille de pas : on[piste][pas] != 0 -> trig. Chaque pas a aussi une vélocité (1..127) et un
+// pitch en demi-tons (-12..12) ; ils sont conservés même quand le pas est éteint.
 struct Pattern {
-    uint8_t on[cfg::MAX_TRACKS][cfg::MAX_STEPS] = {};
+    uint8_t on[cfg::MAX_TRACKS][cfg::MAX_STEPS]       = {};
+    uint8_t velocity[cfg::MAX_TRACKS][cfg::MAX_STEPS];
+    int8_t  pitch[cfg::MAX_TRACKS][cfg::MAX_STEPS]    = {};
+
+    Pattern() {
+        for (int t = 0; t < cfg::MAX_TRACKS; ++t) reset_track(t);
+    }
+
+    // Piste vide, valeurs par défaut (vélocité maximale, pitch 0).
+    void reset_track(int t) {
+        for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+            on[t][s]       = 0;
+            velocity[t][s] = static_cast<uint8_t>(cfg::VELOCITY_MAX);
+            pitch[t][s]    = 0;
+        }
+    }
 };
 
 // Horloge de pas pilotée par le compteur d'échantillons (pas par un timer).

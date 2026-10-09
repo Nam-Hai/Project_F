@@ -1,5 +1,8 @@
 #include "engine.h"
 
+#include <cmath>
+
+#include "dsp_utils.h"
 #include "mixer.h"
 
 Engine::Engine()
@@ -16,9 +19,9 @@ void Engine::set_voice(int track, Voice* voice) {
     voices_[track] = voice;
 }
 
-void Engine::trigger(int track, float velocity) {
+void Engine::trigger(int track, float velocity, float pitch_ratio) {
     if (track < 0 || track >= cfg::MAX_TRACKS || !voices_[track]) return;
-    voices_[track]->trigger(velocity);
+    voices_[track]->trigger_pitched(velocity, pitch_ratio);
     state_.triggers[track].fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -31,6 +34,16 @@ void Engine::release_pointer(const int16_t*& data) {
 
 void Engine::release_sample(int track) {
     release_pointer(track_sample_[track]);
+}
+
+// Supprime une piste : plus de voix, sample rendu à l'UI, pattern / gain / pitch remis à zéro.
+void Engine::clear_track(int track) {
+    voices_[track] = nullptr;
+    players_[track].set_sample(nullptr, 0);
+    players_[track].set_pitch(1.0f);
+    release_sample(track);
+    gains_[track] = 1.0f;
+    seq_.pattern().reset_track(track);  // pas, vélocités et pitchs par défaut
 }
 
 void Engine::apply(const Command& c) {
@@ -63,15 +76,36 @@ void Engine::apply(const Command& c) {
                 voices_[c.track]       = &players_[c.track];
             }
             break;
-        case Command::ClearTrack:
+        case Command::SetTrackPattern:
             if (track_ok) {
-                voices_[c.track] = nullptr;
-                players_[c.track].set_sample(nullptr, 0);
-                players_[c.track].set_pitch(1.0f);
-                release_sample(c.track);
-                gains_[c.track] = 1.0f;
-                for (int s = 0; s < cfg::MAX_STEPS; ++s) seq_.pattern().on[c.track][s] = 0;
+                for (int s = 0; s < cfg::MAX_STEPS; ++s)
+                    seq_.pattern().on[c.track][s] = static_cast<uint8_t>((c.length >> s) & 1u);
             }
+            break;
+        case Command::SetStepVelocity:
+            if (track_ok && step_ok) {
+                int v = static_cast<int>(std::lround(c.value));
+                if (v < cfg::VELOCITY_MIN) v = cfg::VELOCITY_MIN;
+                if (v > cfg::VELOCITY_MAX) v = cfg::VELOCITY_MAX;
+                seq_.pattern().velocity[c.track][c.step] = static_cast<uint8_t>(v);
+            }
+            break;
+        case Command::SetStepPitch:
+            if (track_ok && step_ok) {
+                int v = static_cast<int>(std::lround(c.value));
+                if (v < cfg::STEP_PITCH_MIN) v = cfg::STEP_PITCH_MIN;
+                if (v > cfg::STEP_PITCH_MAX) v = cfg::STEP_PITCH_MAX;
+                seq_.pattern().pitch[c.track][c.step] = static_cast<int8_t>(v);
+            }
+            break;
+        case Command::AuditionStep:
+            if (track_ok && step_ok) play_step(c.track, c.step);
+            break;
+        case Command::ClearTrack:
+            if (track_ok) clear_track(c.track);
+            break;
+        case Command::ClearAll:
+            for (int t = 0; t < cfg::MAX_TRACKS; ++t) clear_track(t);
             break;
         case Command::PreviewSample:
             if (c.data && c.length > 0) {
@@ -99,10 +133,17 @@ void Engine::apply(const Command& c) {
     }
 }
 
+// Déclenche la note d'un pas avec sa vélocité et son pitch.
+void Engine::play_step(int track, int step) {
+    const Pattern& p = seq_.pattern();
+    trigger(track, static_cast<float>(p.velocity[track][step]) / static_cast<float>(cfg::VELOCITY_MAX),
+            dsp::semitone_ratio(p.pitch[track][step]));
+}
+
 void Engine::fire_step() {
     const int step = seq_.fire();
     for (int t = 0; t < cfg::MAX_TRACKS; ++t) {
-        if (seq_.pattern().on[t][step]) trigger(t);
+        if (seq_.pattern().on[t][step]) play_step(t, step);
     }
     state_.step.store(step);
 }

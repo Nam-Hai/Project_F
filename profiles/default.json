@@ -1,0 +1,18 @@
+{
+  "format": "dmp",
+  "version": 1,
+  "profile": "Default",
+  "samples": [
+    "Kick1.wav",
+    "HHcl.wav"
+  ],
+  "loops": [
+    {
+      "bpm": 120.0,
+      "tracks": [
+        { "sample": 0, "gain": 1.0, "pitch": 1.0, "pattern": "x.......x.x.x...", "velocity": "127,127,127,51,127,127,127,127,127,127,127,127,127,127,127,127" },
+        { "sample": 1, "gain": 1.0, "pitch": 1.0, "pattern": "x.x.xxx.x.x.x.x.", "velocity": "127,127,47,127,23,9,127,127,127,27,55,87,127,127,127,127", "step_pitch": "0,0,0,0,0,0,0,0,0,-12,-12,-12,-12,0,0,0" }
+      ]
+    }
+  ]
+}

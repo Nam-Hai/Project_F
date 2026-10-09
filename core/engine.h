@@ -37,7 +37,7 @@ public:
     const EngineState& state() const { return state_; }
 
     // Déclenche une piste immédiatement. Appel réservé au thread audio (ou hors audio actif).
-    void trigger(int track, float velocity = 1.0f);
+    void trigger(int track, float velocity = 1.0f, float pitch_ratio = 1.0f);
 
     // Produit `frames` échantillons stéréo (planaires), taille quelconque. Thread audio.
     void render(float* left, float* right, int frames);
@@ -45,7 +45,9 @@ public:
 private:
     void apply(const Command& cmd);
     void fire_step();
+    void play_step(int track, int step);
     void release_sample(int track);
+    void clear_track(int track);
     void release_pointer(const int16_t*& data);
 
     // Rend des échantillons sans s'occuper du séquenceur, par blocs d'au plus cfg::BLOCK.

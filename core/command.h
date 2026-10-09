@@ -13,7 +13,12 @@ struct Command {
         SetTrackGain,    // track, value = gain
         SetTrackPitch,   // track, value = ratio (1.0 = normal)
         SetTrackSample,  // track, data, length : branche un sample sur la piste (la crée si besoin)
+        SetTrackPattern, // track, length = les 16 pas d'un coup (bit i = pas i)
+        SetStepVelocity, // track, step, value = vélocité 1..127 (bornée)
+        SetStepPitch,    // track, step, value = décalage en demi-tons -12..12 (borné)
+        AuditionStep,    // track, step : joue la note du pas avec ses valeurs, sans toucher au séquenceur
         ClearTrack,      // track : supprime la piste (voix, sample, pattern, gain)
+        ClearAll,        // supprime toutes les pistes (nouvelle loop, chargement d'une loop)
         PreviewSample,   // data, length : joue un sample hors piste (écoute avant ajout)
         StopPreview,     // coupe l'écoute et rend son buffer
         Play,            // repart du pas 0

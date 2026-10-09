@@ -10,10 +10,24 @@ void SamplePlayer::set_pitch(float ratio) {
     if (ratio < MIN_PITCH) ratio = MIN_PITCH;
     if (ratio > MAX_PITCH) ratio = MAX_PITCH;
     pitch_ = ratio;
+    update_effective();
+}
+
+void SamplePlayer::update_effective() {
+    float v = pitch_ * note_ratio_;
+    if (v < MIN_PITCH) v = MIN_PITCH;
+    if (v > MAX_PITCH) v = MAX_PITCH;
+    effective_ = v;
 }
 
 void SamplePlayer::trigger(float velocity) {
+    trigger_pitched(velocity, 1.0f);
+}
+
+void SamplePlayer::trigger_pitched(float velocity, float pitch_ratio) {
     if (!data_ || length_ == 0) return;
+    note_ratio_ = pitch_ratio;
+    update_effective();
     active_ = true;
     index_  = 0;
     frac_   = 0.0f;
@@ -33,7 +47,7 @@ void SamplePlayer::render(float* out, int n) {
         out[i] += gain_ * (s0 + frac_ * (s1 - s0));
 
         // Index entier et fraction séparés : pas de perte de précision sur les longs samples.
-        frac_ += pitch_;
+        frac_ += effective_;
         const uint32_t step = static_cast<uint32_t>(frac_);
         frac_ -= static_cast<float>(step);
         index_ += step;

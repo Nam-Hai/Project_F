@@ -1,0 +1,70 @@
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#include "profile_data.h"
+
+// jsmn : en-tête seul ici (types et déclarations) ; l'implémentation est incluse dans profile_codec.cpp.
+#ifndef JSMN_H
+#define JSMN_HEADER
+#endif
+#include "../../third_party/jsmn/jsmn.h"
+
+// Lecture et écriture d'un profil au format JSON (voir plan_loops.md).
+//
+//   {
+//     "format": "dmp", "version": 1, "profile": "Default",
+//     "samples": ["Kick1.wav", "Snare1.wav"],
+//     "loops": [ { "bpm": 120, "tracks": [
+//         { "sample": 0, "gain": 1.0, "pitch": 1.0, "pattern": "x...x...x...x...",
+//           "velocity": "127,90,...", "step_pitch": "0,3,..." } ] } ]
+//   }
+//
+// « velocity » (1..127) et « step_pitch » (-12..12, demi-tons) sont des listes de nombres dans une
+// chaîne : un seul jeton pour jsmn, au lieu de 17 pour un tableau JSON. Elles ne sont écrites que si
+// une valeur n'est pas celle par défaut (127 et 0) ; absentes ou plus courtes que 16, les valeurs
+// manquantes prennent la valeur par défaut.
+//
+// Le découpage syntaxique est fait par jsmn (générique, sans allocation) ; la couche de ce fichier
+// ne fait que faire correspondre les clés connues à ProfileData. Les clés inconnues sont ignorées :
+// ajouter un champ plus tard = lire une clé de plus, avec une valeur par défaut si elle est absente.
+namespace profile {
+
+constexpr int FORMAT_VERSION = 1;
+
+enum class ProfileStatus : uint8_t {
+    Ok,
+    Truncated,    // le JSON s'arrête avant la fin (fichier coupé)
+    InvalidJson,  // syntaxe invalide ou structure incohérente
+    NotAProfile,  // JSON valide, mais pas un profil de cette application
+    TooNew,       // écrit par une version plus récente du programme
+    TooBig,       // trop de loops, de pistes, de samples ou de jetons pour les tableaux fixes
+    BadField,     // champ de mauvais type, hors limites, trop long ou mal formé
+};
+
+// Message en français pour l'afficher ou le journaliser.
+const char* describe(ProfileStatus status);
+
+// Contient le tableau de jetons de jsmn (environ 115 Ko) : à déclarer static ou sur le tas,
+// jamais sur la pile.
+class ProfileCodec {
+public:
+    // Pire cas : 13 jetons par piste (les 6 clés avec leurs valeurs, plus l'objet) x 16 pistes x 32 loops,
+    // plus 5 jetons par loop et 75 pour l'en-tête et la table de samples : 6 891, avec de la marge.
+    static constexpr int MAX_TOKENS = 7168;
+
+    // Lit un profil. En cas d'échec `out` est invalide : le lire dans un objet de travail, pas
+    // dans celui qu'on utilise. Le texte n'a pas besoin d'être terminé par un zéro.
+    ProfileStatus parse(const char* text, std::size_t length, ProfileData& out);
+
+    // Écrit le profil en JSON dans `buffer` (terminé par un zéro). Retourne la longueur écrite,
+    // sans le zéro, ou -1 si le buffer est trop petit ou si les données sont invalides (index de
+    // sample hors table, caractère de contrôle dans un nom, nombre non fini).
+    static int write(const ProfileData& profile, char* buffer, std::size_t capacity);
+
+private:
+    jsmntok_t tokens_[MAX_TOKENS];
+};
+
+}  // namespace profile

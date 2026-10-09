@@ -11,6 +11,7 @@ endif()
 add_library(core STATIC
   core/engine.cpp
   core/mixer.cpp
+  core/profile/profile_codec.cpp
   core/sample_player.cpp
   core/sequencer.cpp
   core/synth_kick.cpp
@@ -22,16 +23,18 @@ target_compile_options(core PRIVATE -Wall -Wextra -fno-exceptions -fno-rtti)
 
 # Plateforme PC : fichiers (WAV) et sortie audio.
 add_library(desktop_io STATIC
+  platform/desktop/profile_store_file.cpp
   platform/desktop/sample_bank.cpp
   platform/desktop/sample_library.cpp
   platform/desktop/sample_loader.cpp
   platform/desktop/wav_writer.cpp
 )
 target_include_directories(desktop_io PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(desktop_io PUBLIC core)
 
 add_library(desktop_loop STATIC platform/desktop/default_loop.cpp)
-target_link_libraries(desktop_loop PUBLIC core desktop_io)
-target_compile_definitions(desktop_loop PUBLIC SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples")
+target_link_libraries(desktop_loop PUBLIC desktop_io)
+target_compile_definitions(desktop_loop PUBLIC SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples" PROFILES_DIR="${CMAKE_SOURCE_DIR}/profiles")
 
 add_library(desktop_audio STATIC platform/desktop/audio_miniaudio.cpp)
 target_include_directories(desktop_audio PUBLIC ${CMAKE_SOURCE_DIR})
@@ -75,10 +78,10 @@ add_executable(tone_test platform/desktop/tone_test.cpp)
 target_link_libraries(tone_test PRIVATE core desktop_audio)
 
 add_executable(render_wav platform/desktop/render_wav.cpp)
-target_link_libraries(render_wav PRIVATE core desktop_io)
+target_link_libraries(render_wav PRIVATE desktop_io)
 
 add_executable(sample_demo platform/desktop/sample_demo.cpp)
-target_link_libraries(sample_demo PRIVATE core desktop_io)
+target_link_libraries(sample_demo PRIVATE desktop_io)
 
 # Tests
 enable_testing()
@@ -87,7 +90,7 @@ target_link_libraries(test_kick PRIVATE core)
 add_test(NAME kick COMMAND test_kick)
 
 add_executable(test_sample tests/test_sample.cpp)
-target_link_libraries(test_sample PRIVATE core desktop_io)
+target_link_libraries(test_sample PRIVATE desktop_io)
 add_test(NAME sample COMMAND test_sample)
 
 add_executable(test_sequencer tests/test_sequencer.cpp)
@@ -105,3 +108,27 @@ add_test(NAME canvas COMMAND test_canvas)
 add_executable(test_ui tests/test_ui.cpp)
 target_link_libraries(test_ui PRIVATE core)
 add_test(NAME ui COMMAND test_ui)
+
+add_executable(test_profile tests/test_profile.cpp)
+target_link_libraries(test_profile PRIVATE core)
+add_test(NAME profile COMMAND test_profile)
+
+add_executable(test_profile_store tests/test_profile_store.cpp)
+target_link_libraries(test_profile_store PRIVATE desktop_io)
+add_test(NAME profile_store COMMAND test_profile_store)
+
+add_executable(test_loops tests/test_loops.cpp)
+target_link_libraries(test_loops PRIVATE core)
+add_test(NAME loops COMMAND test_loops)
+
+add_executable(test_integration tests/test_integration.cpp)
+target_link_libraries(test_integration PRIVATE desktop_io)
+add_test(NAME integration COMMAND test_integration)
+
+add_executable(test_step_params tests/test_step_params.cpp)
+target_link_libraries(test_step_params PRIVATE core)
+add_test(NAME step_params COMMAND test_step_params)
+
+add_executable(test_step_edit tests/test_step_edit.cpp)
+target_link_libraries(test_step_edit PRIVATE core)
+add_test(NAME step_edit COMMAND test_step_edit)

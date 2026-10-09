@@ -14,4 +14,7 @@ inline float decay_coeff(float tau_seconds, float sample_rate) {
 
 inline float soft_clip(float x) { return std::tanh(x); }
 
+// Rapport de vitesse de lecture pour un décalage en demi-tons : 12 = une octave plus haut (x2).
+inline float semitone_ratio(int semitones) { return std::exp2(static_cast<float>(semitones) / 12.0f); }
+
 }  // namespace dsp

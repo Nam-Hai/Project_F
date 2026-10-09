@@ -48,6 +48,12 @@ void DesktopSampleLibrary::refresh() {
               [](const std::string& a, const std::string& b) { return lower(a) < lower(b); });
 }
 
+int DesktopSampleLibrary::find(const char* file) const {
+    for (std::size_t i = 0; i < names_.size(); ++i)
+        if (names_[i] == file) return static_cast<int>(i);
+    return -1;
+}
+
 bool DesktopSampleLibrary::load(int index, const int16_t*& data, uint32_t& length) {
     if (index < 0 || index >= count()) return false;
 

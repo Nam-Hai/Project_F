@@ -11,4 +11,10 @@ constexpr int   MAX_STEPS   = 16;
 
 constexpr float MASTER_GAIN = 0.8f;
 
+// Valeurs par pas : vélocité (volume de la note) et pitch (demi-tons).
+constexpr int   VELOCITY_MIN     = 1;
+constexpr int   VELOCITY_MAX     = 127;  // valeur par défaut : le volume d'avant les vélocités
+constexpr int   STEP_PITCH_MIN   = -12;
+constexpr int   STEP_PITCH_MAX   = 12;
+
 }  // namespace cfg

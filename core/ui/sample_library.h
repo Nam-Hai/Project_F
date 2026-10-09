@@ -13,6 +13,9 @@ public:
     // Nom d'affichage de l'échantillon `index` (par exemple « Kick1.wav »).
     virtual const char* name(int index) const = 0;
 
+    // Index de l'échantillon dont le nom de fichier est `file`, ou -1 s'il n'existe pas (plus).
+    virtual int find(const char* file) const = 0;
+
     // Charge l'échantillon en mémoire (hors callback audio). Le buffer reste la propriété de la
     // bibliothèque jusqu'à ce que le moteur le rende (Engine::pop_released). false si échec.
     virtual bool load(int index, const int16_t*& data, uint32_t& length) = 0;

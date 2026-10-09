@@ -7,23 +7,23 @@
 // seulement à UiController (InputEvent en entrée, Canvas en sortie).
 //
 // Clavier (fenêtre Controles) : flèches haut/bas = roue, Entrée = Valider,
-// Retour arrière / Échap = Back, M = Menu, Espace = Play/Stop, 1-8 = pas 1-8, Q W E R T Y U I = pas 9-16.
+// Retour arrière / Échap = Back, M = Menu, Tab = Mode, Espace = Play/Stop, 1-8 = pas 1-8, Q W E R T Y U I = pas 9-16.
 #include <SDL.h>
 
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "../../core/engine.h"
 #include "../../core/ui/canvas.h"
 #include "../../core/ui/ui_controller.h"
 #include "audio_miniaudio.h"
-#include "default_loop.h"
-#include "default_pattern.h"
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include "profile_store_file.h"
 #include "sample_bank.h"
 #include "sample_library.h"
 #include "wheel_slider.h"
@@ -147,7 +147,7 @@ public:
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Roue");
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(420);
+        ImGui::SetNextItemWidth(300);
         int pos = wheel_pos_;
         if (ImGui::SliderInt("##wheel", &pos, 0, WHEEL_STEPS - 1, "%d")) {
             const int delta = pos - wheel_pos_;
@@ -167,6 +167,8 @@ public:
         if (ImGui::Button("Back", ImVec2(80, 30))) ui.handle(InputEvent::back());
         ImGui::SameLine();
         if (ImGui::Button("Menu", ImVec2(80, 30))) ui.handle(InputEvent::menu());
+        ImGui::SameLine();
+        if (ImGui::Button("Mode", ImVec2(80, 30))) ui.handle(InputEvent::mode());
         ImGui::SameLine(0, 30);
         if (ImGui::Button(ui.playing() ? "Stop" : "Play", ImVec2(80, 30))) ui.handle(InputEvent::play());
 
@@ -205,7 +207,7 @@ public:
 
         ImGui::Spacing();
         ImGui::TextDisabled("Molette de la souris sur la roue, ou fleches haut/bas.");
-        ImGui::TextDisabled("Entree = Valider, Retour/Echap = Back, M = Menu, Espace = Play/Stop,");
+        ImGui::TextDisabled("Entree = Valider, Retour/Echap = Back, M = Menu, Tab = Mode, Espace = Play/Stop,");
         ImGui::TextDisabled("1-8 et Q W E R T Y U I = pas 1 a 16.");
     }
 
@@ -216,6 +218,7 @@ public:
         if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false))
             ui.handle(InputEvent::back());
         if (ImGui::IsKeyPressed(ImGuiKey_M, false)) ui.handle(InputEvent::menu());
+        if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) ui.handle(InputEvent::mode());
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) ui.handle(InputEvent::play());
         for (int i = 0; i < 16; ++i)
             if (ImGui::IsKeyPressed(STEP_KEYS[i], false)) ui.handle(InputEvent::step(i));
@@ -238,15 +241,16 @@ private:
 }  // namespace
 
 int main() {
-    Engine       engine;
-    SampleBank   bank;
+    Engine               engine;
+    SampleBank           bank;
     DesktopSampleLibrary library(SAMPLES_DIR, bank);
-    UiController ui(engine, &library);
-    DesktopAudio audio;  // détruit avant le moteur et les buffers
+    FileProfileStore     store(std::string(PROFILES_DIR) + "/default.json");
+    UiController         ui(engine, &library, &store);
+    DesktopAudio         audio;  // détruit avant le moteur et les buffers
 
+    // La machine démarre sur une loop vide ; les loops sauvegardées sont dans le profil.
+    ui.load_profile();
     if (!audio.start(render_cb, &engine)) return 1;
-    if (!load_default_loop(engine, bank, &ui)) return 1;
-    send_command(engine, {Command::Play, 0, 0, 0.0f});
 
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
         std::fprintf(stderr, "SDL_Init : %s\n", SDL_GetError());
@@ -257,15 +261,15 @@ int main() {
     {
         // Le vsync d'une seule fenêtre cadence la boucle (deux vsync de suite la diviseraient par deux).
         HostWindow screen_window("Drum machine - Ecran OLED", 60, 60, 800, 420, true);
-        HostWindow controls_window("Drum machine - Controles (materiel simule)", 60, 520, 880, 300, false);
+        HostWindow controls_window("Drum machine - Controles (materiel simule)", 60, 520, 940, 300, false);
         if (!screen_window.ok() || !controls_window.ok()) {
             std::fprintf(stderr, "SDL : %s\n", SDL_GetError());
             return 1;
         }
 
         ScreenView screen(screen_window.renderer());
-        // Le potard démarre à la position qui correspond au BPM de la loop : pas de saut de tempo.
-        FakeHardwareView hardware(static_cast<float>(DEFAULT_BPM - UiController::BPM_MIN) /
+        // Le potard démarre à la position qui correspond au BPM de départ : pas de saut de tempo.
+        FakeHardwareView hardware(static_cast<float>(ui.bpm() - UiController::BPM_MIN) /
                                   static_cast<float>(UiController::BPM_MAX - UiController::BPM_MIN));
         Canvas canvas;
 

@@ -2,3 +2,5 @@ build/
 *.wav
 !samples/**/*.wav
 .DS_Store
+profiles/*.tmp
+profiles/*.bak

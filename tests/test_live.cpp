@@ -23,6 +23,15 @@ static std::vector<float> render(Engine& e, int frames) {
     return l;
 }
 
+// Indices des échantillons où un trig audible (impulsion) tombe.
+static std::vector<int> render_trigs_of(Engine& e, int frames) {
+    const auto out = render(e, frames);
+    std::vector<int> hits;
+    for (int i = 0; i < frames; ++i)
+        if (out[static_cast<std::size_t>(i)] > 0.1f) hits.push_back(i);
+    return hits;
+}
+
 static Command set_sample(uint8_t track, const int16_t* data, uint32_t length) {
     Command c;
     c.type   = Command::SetTrackSample;
@@ -144,6 +153,74 @@ int main() {
         // pitch 2.0 : échantillons 0, 2, 4 de la rampe -> 0, 16000, 32000 (avant tanh et gain master)
         CHECK(out[0] == 0.0f && out[1] > out[0] && out[2] > out[1] && out[3] == 0.0f,
               "pitch 2.0 : trois valeurs croissantes puis la fin");
+    }
+
+    // SetTrackPattern : les 16 pas d'une piste en un seul message.
+    {
+        Engine e;
+        e.push(set_sample(4, loud, 2));
+        Command c;
+        c.type   = Command::SetTrackPattern;
+        c.track  = 4;
+        c.length = 0x8005;  // pas 0, 2 et 15
+        e.push(c);
+        e.push({Command::Play, 0, 0, 0.0f});
+        auto hits = render_trigs_of(e, 17 * 5513);
+        CHECK(hits.size() == 4, "pas 0, 2, 15 puis 0 du tour suivant");
+        if (hits.size() == 4) {
+            CHECK(hits[0] == 0 && hits[1] == static_cast<int>(std::ceil(2 * 5512.5)) &&
+                      hits[2] == static_cast<int>(std::ceil(15 * 5512.5)) && hits[3] == static_cast<int>(std::ceil(16 * 5512.5)),
+                  "SetTrackPattern : trigs aux bons pas");
+        }
+
+        // Un nouveau pattern remplace l'ancien en entier (pas de cumul).
+        c.length = 0x0002;
+        e.push(c);
+        e.push({Command::Stop, 0, 0, 0.0f});
+        e.push({Command::Play, 0, 0, 0.0f});
+        hits = render_trigs_of(e, 5 * 5513);
+        CHECK(hits.size() == 1 && hits[0] == static_cast<int>(std::ceil(1 * 5512.5)), "le nouveau pattern remplace l'ancien");
+
+        c.track = 200;  // piste hors limites : ignorée
+        e.push(c);
+        render(e, 16);
+    }
+
+    // ClearAll : toutes les pistes disparaissent, chaque buffer est rendu une fois.
+    {
+        Engine e;
+        e.push(set_sample(0, loud, 2));
+        e.push(set_sample(3, quiet, 2));
+        e.push({Command::SetStep, 0, 0, 1.0f});
+        e.push({Command::SetStep, 3, 0, 1.0f});
+        e.push({Command::SetTrackGain, 3, 0, 0.2f});
+        e.push({Command::ClearAll, 0, 0, 0.0f});
+        e.push({Command::Play, 0, 0, 0.0f});
+        auto out = render(e, 6 * 5513);
+        bool silent = true;
+        for (float s : out) silent = silent && s == 0.0f;
+        CHECK(silent, "ClearAll : plus aucun son");
+        int            released = 0;
+        const int16_t* p        = nullptr;
+        bool           both     = false, other = false;
+        int            seen_loud = 0, seen_quiet = 0;
+        while (e.pop_released(p)) {
+            ++released;
+            if (p == loud) ++seen_loud;
+            else if (p == quiet) ++seen_quiet;
+            else other = true;
+        }
+        both = seen_loud == 1 && seen_quiet == 1;
+        CHECK(released == 2 && both && !other, "ClearAll : les deux buffers rendus une seule fois");
+
+        // Les index sont réutilisables, repartis de zéro (pattern vide, gain 1).
+        e.push(set_sample(3, loud, 2));
+        e.push({Command::Stop, 0, 0, 0.0f});
+        e.push({Command::Play, 0, 0, 0.0f});
+        out = render(e, 6 * 5513);
+        bool silent2 = true;
+        for (float s : out) silent2 = silent2 && s == 0.0f;
+        CHECK(silent2, "après ClearAll, une piste recréée est vide");
     }
 
     // Écoute (preview) : joue hors piste, même séquenceur à l'arrêt ; buffers rendus au remplacement / à l'arrêt.

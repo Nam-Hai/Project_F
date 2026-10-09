@@ -9,8 +9,7 @@
 constexpr float DEFAULT_BPM = 120.0f;
 
 struct TrackSetup {
-    // "synth:kick"  -> kick synthétisé par le moteur
-    // "mon_son.wav" -> fichier du dossier samples/ (WAV mono, 16 bits, 44,1 kHz)
+    // Nom d'un fichier du dossier samples/ (WAV mono, 16 bits, 44,1 kHz)
     const char* sample;
     float       pitch;    // 1.0 = normal, 0.5 = une octave plus bas, 2.0 = une octave plus haut
     float       gain;     // volume de la piste, 1.0 = plein

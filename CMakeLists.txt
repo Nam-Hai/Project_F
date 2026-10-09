@@ -14,16 +14,24 @@ add_library(core STATIC
   core/sample_player.cpp
   core/sequencer.cpp
   core/synth_kick.cpp
+  core/ui/canvas.cpp
+  core/ui/ui_controller.cpp
 )
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})
 target_compile_options(core PRIVATE -Wall -Wextra -fno-exceptions -fno-rtti)
 
 # Plateforme PC : fichiers (WAV) et sortie audio.
 add_library(desktop_io STATIC
+  platform/desktop/sample_bank.cpp
+  platform/desktop/sample_library.cpp
   platform/desktop/sample_loader.cpp
   platform/desktop/wav_writer.cpp
 )
 target_include_directories(desktop_io PUBLIC ${CMAKE_SOURCE_DIR})
+
+add_library(desktop_loop STATIC platform/desktop/default_loop.cpp)
+target_link_libraries(desktop_loop PUBLIC core desktop_io)
+target_compile_definitions(desktop_loop PUBLIC SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples")
 
 add_library(desktop_audio STATIC platform/desktop/audio_miniaudio.cpp)
 target_include_directories(desktop_audio PUBLIC ${CMAKE_SOURCE_DIR})
@@ -35,8 +43,33 @@ elseif(UNIX)
 endif()
 
 add_executable(drum_machine platform/desktop/main.cpp)
-target_link_libraries(drum_machine PRIVATE core desktop_io desktop_audio)
-target_compile_definitions(drum_machine PRIVATE SAMPLES_DIR="${CMAKE_SOURCE_DIR}/samples")
+target_link_libraries(drum_machine PRIVATE desktop_loop desktop_audio)
+
+add_executable(canvas_preview platform/desktop/canvas_preview.cpp)
+target_link_libraries(canvas_preview PRIVATE core)
+
+# Émulateur PC (Dear ImGui + SDL2) : optionnel, jamais embarqué sur Teensy.
+find_package(SDL2 QUIET)
+if(SDL2_FOUND)
+  add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/imgui_impl_sdl2.cpp
+    third_party/imgui/imgui_impl_sdlrenderer2.cpp
+  )
+  target_include_directories(imgui PUBLIC third_party/imgui)
+  target_link_libraries(imgui PUBLIC SDL2::SDL2)
+
+  add_executable(canvas_window platform/desktop/canvas_window.cpp)
+  target_link_libraries(canvas_window PRIVATE core imgui)
+
+  add_executable(emulator platform/desktop/emulator.cpp)
+  target_link_libraries(emulator PRIVATE desktop_loop desktop_audio imgui)
+else()
+  message(STATUS "SDL2 introuvable : l'émulateur (canvas_window) n'est pas compilé")
+endif()
 
 add_executable(tone_test platform/desktop/tone_test.cpp)
 target_link_libraries(tone_test PRIVATE core desktop_audio)
@@ -60,3 +93,15 @@ add_test(NAME sample COMMAND test_sample)
 add_executable(test_sequencer tests/test_sequencer.cpp)
 target_link_libraries(test_sequencer PRIVATE core)
 add_test(NAME sequencer COMMAND test_sequencer)
+
+add_executable(test_live tests/test_live.cpp)
+target_link_libraries(test_live PRIVATE core)
+add_test(NAME live COMMAND test_live)
+
+add_executable(test_canvas tests/test_canvas.cpp)
+target_link_libraries(test_canvas PRIVATE core)
+add_test(NAME canvas COMMAND test_canvas)
+
+add_executable(test_ui tests/test_ui.cpp)
+target_link_libraries(test_ui PRIVATE core)
+add_test(NAME ui COMMAND test_ui)

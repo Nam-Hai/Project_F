@@ -6,6 +6,10 @@
 
 #include "../config.h"
 #include "../core/sample_player.h"
+#include <filesystem>
+
+#include "../platform/desktop/sample_bank.h"
+#include "../platform/desktop/sample_library.h"
 #include "../platform/desktop/sample_loader.h"
 
 static int failures = 0;
@@ -152,6 +156,72 @@ int main() {
 
         CHECK(!load_wav_mono16("fichier_inexistant.wav", loaded, err), "fichier absent refusé");
         std::remove(path);
+    }
+
+    // SampleBank : possède les buffers, pointeurs stables, libération à la demande.
+    {
+        const char*          path = "test_sample_bank.wav";
+        std::vector<int16_t> src  = {5, 6, 7, 8};
+        write_test_wav(path, 1, cfg::SAMPLE_RATE, src);
+
+        SampleBank     bank;
+        const int16_t* a = nullptr;
+        const int16_t* b = nullptr;
+        uint32_t       la = 0, lb = 0;
+        std::string    err;
+
+        CHECK(bank.load(path, a, la, err) && la == 4 && a[2] == 7, "bank : chargement");
+        CHECK(bank.load(path, b, lb, err) && a != b, "bank : deux chargements = deux buffers");
+        CHECK(bank.count() == 2, "bank : deux buffers possédés");
+
+        bank.release(a);
+        CHECK(bank.count() == 1 && b[3] == 8, "bank : libération d'un buffer, l'autre reste valide");
+        bank.release(a);  // pointeur déjà libéré : ignoré
+        CHECK(bank.count() == 1, "bank : double libération ignorée");
+
+        CHECK(!bank.load("fichier_inexistant.wav", a, la, err), "bank : fichier absent refusé");
+        CHECK(bank.count() == 1, "bank : un échec n'ajoute rien");
+        std::remove(path);
+    }
+
+    // DesktopSampleLibrary : ne liste que les WAV utilisables, triés sans tenir compte de la casse.
+    {
+        namespace fs = std::filesystem;
+        const std::string dir = "test_sample_library_dir";
+        fs::remove_all(dir);
+        fs::create_directory(dir);
+
+        const std::vector<int16_t> pcm = {10, 20, 30};
+        write_test_wav((dir + "/snare.wav").c_str(), 1, cfg::SAMPLE_RATE, pcm);
+        write_test_wav((dir + "/Kick.WAV").c_str(), 1, cfg::SAMPLE_RATE, pcm);
+        write_test_wav((dir + "/stereo.wav").c_str(), 2, cfg::SAMPLE_RATE, pcm);      // mauvais format
+        write_test_wav((dir + "/.cache.wav").c_str(), 1, cfg::SAMPLE_RATE, pcm);      // fichier caché
+        std::FILE* f = std::fopen((dir + "/notes.txt").c_str(), "wb");               // pas un WAV
+        std::fclose(f);
+
+        SampleBank           bank;
+        DesktopSampleLibrary lib(dir, bank);
+        CHECK(lib.count() == 2, "bibliothèque : 2 samples utilisables sur 5 fichiers");
+        CHECK(lib.count() == 2 && std::string(lib.name(0)) == "Kick.WAV" && std::string(lib.name(1)) == "snare.wav",
+              "bibliothèque : tri alphabétique insensible à la casse");
+
+        const int16_t* data = nullptr;
+        uint32_t       len  = 0;
+        CHECK(lib.load(1, data, len) && len == 3 && data[2] == 30, "bibliothèque : chargement dans la banque");
+        CHECK(bank.count() == 1, "la banque possède le buffer");
+        lib.discard(data);
+        CHECK(bank.count() == 0, "discard libère le buffer");
+        CHECK(!lib.load(5, data, len) && !lib.load(-1, data, len), "index invalide refusé");
+
+        write_test_wav((dir + "/new.wav").c_str(), 1, cfg::SAMPLE_RATE, pcm);
+        lib.refresh();
+        CHECK(lib.count() == 3, "refresh : le nouveau fichier apparaît");
+
+        SampleBank           bank2;
+        DesktopSampleLibrary missing("dossier_inexistant", bank2);
+        CHECK(missing.count() == 0, "dossier inexistant : liste vide, sans plantage");
+
+        fs::remove_all(dir);
     }
 
     if (failures == 0) std::printf("OK\n");

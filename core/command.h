@@ -7,19 +7,35 @@
 // Commande envoyée par une source (pattern initial, UI simulée, UI matérielle) au moteur.
 struct Command {
     enum Type : uint8_t {
-        SetBpm,         // value = BPM
-        SetStep,        // track, step, value > 0.5 = trig actif
-        ToggleStep,     // track, step
-        SetTrackGain,   // track, value = gain
-        Play,           // repart du pas 0
+        SetBpm,          // value = BPM
+        SetStep,         // track, step, value > 0.5 = trig actif
+        ToggleStep,      // track, step
+        SetTrackGain,    // track, value = gain
+        SetTrackPitch,   // track, value = ratio (1.0 = normal)
+        SetTrackSample,  // track, data, length : branche un sample sur la piste (la crée si besoin)
+        ClearTrack,      // track : supprime la piste (voix, sample, pattern, gain)
+        PreviewSample,   // data, length : joue un sample hors piste (écoute avant ajout)
+        StopPreview,     // coupe l'écoute et rend son buffer
+        Play,            // repart du pas 0
         Stop,
-        Trigger,        // track : déclenchement immédiat (boutons)
+        Trigger,         // track : déclenchement immédiat (boutons)
     };
 
-    Type    type  = Stop;
-    uint8_t track = 0;
-    uint8_t step  = 0;
-    float   value = 0.0f;
+    Type           type  = Stop;
+    uint8_t        track = 0;
+    uint8_t        step  = 0;
+    float          value = 0.0f;
+    const int16_t* data   = nullptr;  // SetTrackSample : mono 16 bits 44,1 kHz, doit rester valide
+    uint32_t       length = 0;        // jusqu'à ce que le moteur le rende (Engine::pop_released)
+};
+
+// Destination des commandes : le moteur en vrai, un enregistreur dans les tests.
+class CommandSink {
+public:
+    virtual ~CommandSink() = default;
+
+    // false si la commande n'a pas pu être acceptée (file pleine) : l'appelant peut réessayer.
+    virtual bool push(const Command& cmd) = 0;
 };
 
 // File lock-free pour un producteur et un consommateur (loop() -> callback audio).

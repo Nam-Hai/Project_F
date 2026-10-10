@@ -13,6 +13,8 @@
 
 #include "../config.h"
 #include "../core/engine.h"
+#include "../core/profile/binary_codec.h"
+#include "../core/profile/profile_codec.h"
 #include "../core/ui/ui_controller.h"
 #include "../platform/desktop/profile_store_file.h"
 #include "../platform/desktop/sample_bank.h"
@@ -94,7 +96,7 @@ struct Machine {
 int main() {
     const std::string dir     = "test_integration_dir";
     const std::string samples = dir + "/samples";
-    const std::string profile = dir + "/profiles/default.json";
+    const std::string profile = dir + "/profiles/default.dmp";
     const int         frames  = 130000;  // un peu plus d'une mesure à 90 BPM
     fs::remove_all(dir);
     fs::create_directories(samples);
@@ -173,15 +175,20 @@ int main() {
     // Le .bak garde la version précédente du profil.
     CHECK(fs::exists(profile + ".bak") && !fs::exists(profile + ".tmp"), "ancienne version dans .bak, pas de .tmp");
 
-    // Vélocité et pitch par pas, de bout en bout : fichier JSON écrit à la main -> UI -> moteur.
+    // Vélocité et pitch par pas, de bout en bout : profil écrit à la main en JSON, converti en binaire -> UI -> moteur.
     {
         write_wav(samples + "/hat.wav", {9000, -9000, 6000, -6000, 3000, 0});  // le hat est de retour
-        const std::string custom = dir + "/profiles/custom.json";
+        const std::string custom = dir + "/profiles/custom.dmp";
         {
-            std::ofstream f(custom, std::ios::binary | std::ios::trunc);
-            f << R"({"format":"dmp","version":1,"samples":["click.wav","hat.wav"],"loops":[{"bpm":120,"tracks":[
+            // Hand-written JSON (the readable form) -> data -> binary file, as the profile tool will do.
+            const std::string text = R"({"format":"dmp","version":1,"samples":["click.wav","hat.wav"],"loops":[{"bpm":120,"tracks":[
                 {"sample":0,"pattern":"x...x...","velocity":"127,127,127,127,64,127,127,127,127,127,127,127,127,127,127,127","step_pitch":"7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"},
                 {"sample":1,"gain":0.5,"pattern":"..x.....x.......","velocity":"127,127,40,127,127,127,127,127,90,127,127,127,127,127,127,127","step_pitch":"0,0,-12,0,0,0,0,0,12,0,0,0,0,0,0,0"}]}]})";
+            static profile::ProfileCodec codec;
+            static profile::ProfileData  data;
+            CHECK(codec.parse(text.data(), text.size(), data) == profile::ProfileStatus::Ok, "hand-written JSON profile parses");
+            FileProfileStore writer(custom);
+            CHECK(writer.save(data), "...and is stored as a binary profile");
         }
 
         auto m = std::unique_ptr<Machine>(new Machine(samples, custom));

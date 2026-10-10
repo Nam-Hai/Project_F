@@ -2,13 +2,11 @@
 
 #include <filesystem>
 #include <fstream>
-#include <iterator>
-#include <vector>
+
+#include "../../core/profile/binary_codec.h"
+#include "file_stream.h"
 
 namespace fs = std::filesystem;
-
-FileProfileStore::FileProfileStore(std::string path)
-    : path_(std::move(path)), codec_(new profile::ProfileCodec) {}
 
 bool FileProfileStore::fail(const std::string& message) {
     error_ = message;
@@ -29,9 +27,9 @@ profile::LoadResult FileProfileStore::load(profile::ProfileData& out) {
         fail("profil illisible");
         return profile::LoadResult::Failed;
     }
-    const std::vector<char> text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
-    const profile::ProfileStatus status = codec_->parse(text.data(), text.size(), out);
+    FileSource                  source(file);
+    const profile::ProfileStatus status = profile::BinaryCodec::read(source, out);
     if (status != profile::ProfileStatus::Ok) {
         fail(profile::describe(status));
         return profile::LoadResult::Failed;
@@ -42,9 +40,7 @@ profile::LoadResult FileProfileStore::load(profile::ProfileData& out) {
 bool FileProfileStore::save(const profile::ProfileData& profile) {
     error_.clear();
 
-    std::vector<char> text(256 * 1024);  // le pire cas (12 loops de 16 pistes, tout rempli) atteint 215 Ko avec les pans
-    const int         len = profile::ProfileCodec::write(profile, text.data(), text.size());
-    if (len < 0) return fail("profil invalide ou trop grand");
+    if (!profile::BinaryCodec::valid(profile)) return fail("profil invalide ou trop grand");
 
     std::error_code ec;
     const fs::path  target(path_);
@@ -57,16 +53,17 @@ bool FileProfileStore::save(const profile::ProfileData& profile) {
     {
         std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
         if (!out) return fail("écriture impossible");
-        out.write(text.data(), len);
+        FileSink sink(out);
+        const bool written = profile::BinaryCodec::write(profile, sink);
         out.flush();
-        if (!out) {
+        if (!written || !out) {
             out.close();
             fs::remove(tmp, ec);
             return fail("écriture interrompue");
         }
     }
 
-    // L'ancienne version est gardée à côté, au cas où.
+    // The old version is kept next to it, just in case.
     if (fs::exists(target, ec)) {
         fs::copy_file(target, path_ + ".bak", fs::copy_options::overwrite_existing, ec);
         if (ec) {

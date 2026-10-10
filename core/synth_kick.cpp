@@ -27,8 +27,8 @@ void SynthKick::render(float* out, int n) {
 
         out[i] += amp_ * std::sin(phase_);
 
-        phase_ += dsp::TWO_PI * freq / sample_rate_;
-        if (phase_ >= dsp::TWO_PI) phase_ -= dsp::TWO_PI;
+        phase_ += dsp::TWO_PI_F * freq / sample_rate_;
+        if (phase_ >= dsp::TWO_PI_F) phase_ -= dsp::TWO_PI_F;
 
         pitch_env_ *= pitch_alpha_;
         amp_       *= amp_alpha_;

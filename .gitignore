@@ -4,3 +4,4 @@ build/
 .DS_Store
 profiles/*.tmp
 profiles/*.bak
+.pio/

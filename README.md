@@ -28,6 +28,16 @@ ctest --test-dir build      # run the tests
 ./build/emulator            # run the emulator
 ```
 
+Profiles are stored in a compact binary format (`profiles/default.dmp`), the same file on the PC and on the Teensy. `profile_tool` converts them to readable JSON and back:
+
+```sh
+./build/profile_tool bin2json profiles/default.dmp [out.json]   # binary -> JSON (standard output if no file)
+./build/profile_tool json2bin in.json out.dmp                   # JSON -> binary
+./build/profile_tool check profiles/default.dmp                 # verify the file (CRC, bounds) and print a summary
+```
+
+The Teensy 4.1 firmware builds with [PlatformIO](https://platformio.org) (`brew install platformio`): `pio run` compiles `core/` and `platform/teensy/` for the board (the first run downloads the toolchain into `~/.platformio`), `pio run -t upload` flashes it.
+
 ## Docs (in French)
 - `feuille_de_route_technique_architecture_logicielle.md`: architecture and roadmap.
 - `fiche_technique_mat_rielle_composants.md`: hardware and bill of materials.

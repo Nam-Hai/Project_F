@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "profile_data.h"
+#include "profile_status.h"
 
 // jsmn : en-tête seul ici (types et déclarations) ; l'implémentation est incluse dans profile_codec.cpp.
 #ifndef JSMN_H
@@ -42,19 +43,6 @@
 namespace profile {
 
 constexpr int FORMAT_VERSION = 1;
-
-enum class ProfileStatus : uint8_t {
-    Ok,
-    Truncated,    // le JSON s'arrête avant la fin (fichier coupé)
-    InvalidJson,  // syntaxe invalide ou structure incohérente
-    NotAProfile,  // JSON valide, mais pas un profil de cette application
-    TooNew,       // écrit par une version plus récente du programme
-    TooBig,       // trop de loops, de pistes, de samples ou de jetons pour les tableaux fixes
-    BadField,     // champ de mauvais type, hors limites, trop long ou mal formé
-};
-
-// Message en français pour l'afficher ou le journaliser.
-const char* describe(ProfileStatus status);
 
 // Contient le tableau de jetons de jsmn (environ 100 Ko) : à déclarer static ou sur le tas,
 // jamais sur la pile.

@@ -11,12 +11,12 @@ struct Tone {
 
 static void render_tone(float* left, float* right, int frames, void* user) {
     auto* tone = static_cast<Tone*>(user);
-    const float inc = dsp::TWO_PI * 440.0f / static_cast<float>(cfg::SAMPLE_RATE);
+    const float inc = dsp::TWO_PI_F * 440.0f / static_cast<float>(cfg::SAMPLE_RATE);
 
     for (int i = 0; i < frames; ++i) {
         left[i] = right[i] = 0.2f * std::sin(tone->phase);
         tone->phase += inc;
-        if (tone->phase >= dsp::TWO_PI) tone->phase -= dsp::TWO_PI;
+        if (tone->phase >= dsp::TWO_PI_F) tone->phase -= dsp::TWO_PI_F;
     }
 }
 

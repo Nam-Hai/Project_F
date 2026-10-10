@@ -20,11 +20,10 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 ## Prêt maintenant
 *(à jour au 10/10/2026)*
 - **B-001** Commander le matériel (utilisateur, priorité 1)
-- **B-010** Codec binaire du profil (priorité 1)
+- **B-060** Reprise de la carte SD (`.tmp` / `.bak` + CRC) (priorité 1)
 - **B-020** Lecture d'en-tête WAV seule (priorité 1)
 - **B-030** Fonction « afficher ce Canvas » isolée (priorité 2)
 - **B-040** Protocole d'événements de la télécommande (priorité 2)
-- **B-050** Installer PlatformIO (utilisateur doit confirmer, priorité 2)
 - **B-070** Journal d'erreurs sur la carte (priorité 3)
 - **B-080** Série de scénarios de charge (priorité 2)
 
@@ -35,28 +34,41 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 ### B-001 Commander le matériel
 - statut: todo · priorité: 1 · propriétaire: utilisateur · étiquettes: phase-1, matériel
 - dépend de: —
-- références: plan_teensy.md#T17, #T9, #T4, #T19 ; fiche_technique_mat_rielle_composants.md
-- terminé quand: tout est reçu. À commander : Teensy 4.1 avec PSRAM (avis : DEV-26-P, 16 Mo sans flash, 48,95 $ ; la variante avec flash est un bonus que rien n'utilise) · module PCM5102A avec jack · écran Waveshare 2.42" SSD1309 SPI · carte microSD 16 à 32 Go (FAT32) · câbles, plaque d'essai · alimentation USB de qualité. Pas de boutons ni de potentiomètres pour l'instant.
+- références: achats.md (panier détaillé, liens et prix) ; plan_teensy.md#T17, #T9, #T4, #T19 ; fiche_technique_mat_rielle_composants.md
+- terminé quand: tout est commandé sur Amazon (option B décidée le 10/10/2026 : Teensy 4.1 nue avec connecteurs + deux puces PSRAM 8 Mo soudées soi-même, module PCM5102A avec jack, écran Waveshare 2,42" SSD1309 SPI, microSD 32 Go, plaque d'essai et câbles Dupont, matériel de soudure CMS si besoin) puis reçu et contrôlé. Pas de boutons ni de potentiomètres pour l'instant. Reste à lire les prix du pack de puces PSRAM (Amazon.de) avant de payer.
+
+### B-002 Souder les puces PSRAM sur la Teensy
+- statut: todo · priorité: 1 · propriétaire: utilisateur · étiquettes: phase-1, matériel
+- dépend de: B-001
+- références: achats.md (section « La soudure ») ; plan_teensy.md#T18
+- terminé quand: deux puces de 8 Mo sont soudées sur les petites pastilles au dos de la carte (sous le lecteur SD, entre les broches 31-32 et 33-34), et le test de mémoire de PJRC voit 16 Mo ; sinon, une puce de rechange est essayée.
 
 ## Phase 0 : sans matériel, sur le Mac
 
 ### B-010 Codec binaire du profil
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, profil, core
+- statut: done · priorité: 1 · propriétaire: claude · étiquettes: phase-0, profil, core
 - dépend de: —
 - références: plan_teensy.md#T7, #T14 ; core/profile/
 - terminé quand: `BinaryCodec` dans `core/` (enregistrements balisés, valeurs par défaut absentes, étiquettes inconnues sautées, **octet de version** en en-tête, CRC32), interface de flux `ByteSource` / `ByteSink`, tests (aller-retour, fichier tronqué, CRC faux, fuzz, pire cas de taille).
+- décisions (discussion du 10/10/2026) : flux plat d'enregistrements `[étiquette][longueur][contenu]` sans imbrication (une étiquette `LOOP` ouvre une loop, `TRACK` une piste, les champs suivants s'appliquent à la piste courante) ; marque `DMPB` + octet de version + petit-boutiste ; champs absents = défaut ; étiquette inconnue sautée ; CRC32 dans l'enregistrement de fin ; interfaces `ByteSource` / `ByteSink` ; nouvelle valeur `ProfileStatus::BadChecksum`.
+- vérifié (10/10/2026) : `core/profile/binary_codec.{h,cpp}` (lecture, écriture, `valid`), `byte_stream.h` (`ByteSource`, `ByteSink`, `MemorySource`, `MemorySink`), `crc32.h` (CRC-32 à table de 16 entrées), `profile_status.{h,cpp}` (le statut d'erreur et `describe` sortent du codec JSON ; nouvelle valeur `BadChecksum`). Nouveau test `test_profile_binary` : valeurs de CRC connues et référence bit à bit, aller-retour (dont les extrémités des plages), valeurs par défaut non écrites (profil vide : 20 octets), pire cas 12 loops × 16 pistes pleines : **87 387 octets** (234 Ko en JSON), lecture par morceaux de 1 à 1000 octets, compatibilité JSON → binaire → JSON, erreurs d'en-tête, CRC, données après la fin, compatibilité future (étiquettes inconnues sautées, enregistrement plus long accepté, fin plus longue acceptée), ordre des enregistrements, limites (64 samples, 12 loops, 16 pistes, noms), chaque plage champ par champ (limite acceptée, limite + 1 refusée), refus à l'écriture, sink qui échoue, **toute coupure du fichier refusée et signalée comme tronquée**, **tout octet modifié refusé**, 20 000 entrées aléatoires. ASan et UBSan propres. Tests de mutation : 161 mutations du codec et du CRC, 157 tuées ; les 4 restantes sont équivalentes (`+ 0` sans effet ; mise à jour du CRC après sa lecture ; garde de nom non terminé dont l'absence ne se voit que par une lecture hors tableau ; réinitialisation de piste redondante, retirée du code). Compilation pour la Teensy sans avertissement ; le codec pèse 13 Ko de code, aucune variable statique. Les 25 tests passent.
+
 
 ### B-011 Émulateur : stockage du profil en binaire
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, profil
+- statut: done · priorité: 1 · propriétaire: claude · étiquettes: phase-0, profil
 - dépend de: B-010
 - références: plan_teensy.md#T7 ; platform/desktop/profile_store_file.*
 - terminé quand: l'émulateur lit et écrit le binaire ; le JSON n'est plus utilisé par le programme.
+- vérifié (10/10/2026) : `FileProfileStore` (`platform/desktop/profile_store_file.*`) lit et écrit par flux avec `BinaryCodec` (plus de tampon de 256 Ko ni de tableau de jetons de 100 Ko) ; même écriture sûre (`.tmp`, `.bak`, renommage) ; l'émulateur utilise `profiles/default.dmp` (converti une fois depuis `default.json` : 269 octets au lieu de 1 231, relu avec succès). `test_profile_store` réécrit pour le binaire (fichier coupé, octet abîmé, texte quelconque, JSON refusé, fichier vide, version trop récente, `.bak`, profil invalide, pire cas de 12 loops × 16 pistes) ; `test_integration` convertit son profil JSON écrit à la main en binaire. Les 25 tests passent. `profiles/default.json` est gardé en attendant `profile_tool` (B-012). Pas de conversion automatique à la lecture : un ancien fichier JSON n'est plus lu.
+
 
 ### B-012 Outil `profile_tool` (binaire ↔ JSON)
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, profil, outillage
+- statut: done · priorité: 2 · propriétaire: claude · étiquettes: phase-0, profil, outillage
 - dépend de: B-010
 - références: plan_teensy.md#T7 ; tools/
 - terminé quand: `profile_tool` convertit un profil binaire en JSON lisible et inversement, avec test d'aller-retour.
+- vérifié (10/10/2026) : `tools/profile_tool` (`bin2json`, `json2bin`, `check`) construit sur `tools/profile_tool.{h,cpp}` (testable) et `profile_tool_main.cpp` ; adaptateurs fichier partagés dans `platform/desktop/file_stream.h` (utilisés aussi par `FileProfileStore`). Écriture via « .tmp » puis renommage : un échec ne laisse jamais un fichier de sortie abîmé. Codes de sortie 0 / 1 (échec) / 2 (usage). Test `test_profile_tool` : `profiles/default.json` aller-retour JSON → binaire → JSON → binaire à l'identique, pire cas (12 loops × 16 pistes pleines : JSON 207 Ko, binaire 87 Ko), usage, fichiers absents, JSON invalide, nombre hors flottant (`bpm` 1e39) refusé avec message clair, sortie dans un dossier inexistant ou sur un dossier, fichier binaire coupé / octet abîmé / JSON donné comme binaire / vide. ASan et UBSan propres. Mutations : 23 tuées sur 27 ; les 4 restantes sont équivalentes ou non testables (échec d'écriture disque plein, échec JSON impossible pour un profil binaire valide, écriture déjà filtrée par `valid`). Les 26 tests passent. `profiles/default.json` peut maintenant être supprimé : `profile_tool bin2json profiles/default.dmp` le régénère.
+
 
 ### B-020 Lecture d'en-tête WAV seule
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core
@@ -113,16 +125,18 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - terminé quand: l'émulateur peut envoyer ses événements par le transport choisi (testé en boucle locale tant qu'il n'y a pas de carte).
 
 ### B-050 Installer PlatformIO
-- statut: todo · priorité: 2 · propriétaire: utilisateur · étiquettes: phase-0, outillage
+- statut: done · priorité: 2 · propriétaire: utilisateur (confirmé le 10/10/2026) · étiquettes: phase-0, outillage
 - dépend de: —
 - références: plan_teensy.md#T11
 - terminé quand: `pio --version` répond. Confirmation de l'utilisateur avant `brew install platformio` ; le premier téléchargement (plateforme Teensy, Teensyduino 1.62, compilateur ARM) va dans `~/.platformio`.
+- vérifié: `brew install platformio` fait, `pio --version` répond « PlatformIO Core, version 6.2.0 ». Homebrew a nettoyé au passage d'anciennes versions de paquets et son cache (readline, sqlite, xz, zstd, vcpkg...) ; le build du projet et les 24 tests passent toujours.
 
 ### B-051 `platformio.ini` et compilation de `core/` pour le Cortex-M7
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage, core
+- statut: done · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage, core
 - dépend de: B-050
 - références: plan_teensy.md#T11
 - terminé quand: carte `teensy41`, `build_src_filter` sur `core/` et `platform/teensy/`, options `-std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wdouble-promotion` ; un programme minimal qui inclut `core/` compile sans erreur ; surprises de portabilité corrigées.
+- vérifié: `pio run` réussit pour `teensy41` (plateforme teensy 6.0.0, framework-arduinoteensy 1.162.0 = Teensyduino 1.62, compilateur ARM GCC 15.2). `platformio.ini` à la racine, `platform/teensy/main.cpp` minimal qui tire `Engine`, `UiController` et `Canvas` dans l'édition de liens (le codec JSON `profile_codec.cpp` est exclu : PC seulement). Une surprise de portabilité corrigée : `dsp::PI` et `dsp::TWO_PI` heurtaient les macros `PI` et `TWO_PI` d'Arduino, renommées `PI_F` et `TWO_PI_F` (`core/dsp_utils.h`, `core/synth_kick.cpp`, `platform/desktop/tone_test.cpp`) ; build du Mac et 24 tests toujours verts. Avertissements restants dans `core/` : 1 conversion float vers double (`sequencer.h:73`, voulue) et 5 avertissements de troncature de `snprintf` dans `ui_controller.cpp`. **Tous traités ensuite (10/10/2026)** : `static_cast<double>(bpm_)` dans `sequencer.h`, et valeurs bornées par `clamp_int` avant les `snprintf` (aucun changement d'affichage pour les valeurs réelles). `pio run` sur un build propre des sources du projet : 0 avertissement ; build du Mac et 24 tests toujours verts.
 
 ### B-052 Remplacer le `%f` du gain en dB
 - statut: done · priorité: 3 · propriétaire: claude · étiquettes: phase-0, core
@@ -132,10 +146,11 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - vérifié: `snprintf("%+ddB", lround(db))` dans `core/ui/ui_controller.cpp` ; plus aucun format flottant dans `core/` hors `profile_codec` (JSON, PC seulement) ; build propre, 24 tests sur 24 passent. Prolongement hors backlog (demande de l'utilisateur) : pas du gain à 0,5 dB, affichage `+0.5dB`.
 
 ### B-053 Taille du code et de la mémoire sur la Teensy
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage
+- statut: done · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage
 - dépend de: B-051
 - références: plan_teensy.md#T11, #T6
 - terminé quand: la sortie de l'éditeur de liens est relevée (code, RAM1, RAM2, PSRAM) et comparée aux 61 Ko du profil, aux 68 Ko de l'interface et aux 19 Ko du moteur.
+- vérifié: mesures de `teensy_size` pour le programme minimal (moteur + interface, sans matériel) : FLASH code 62 Ko, données 11 Ko ; RAM1 variables 100 Ko (moteur ~19 Ko + interface ~68 Ko avec le profil + tampons + Arduino), code en ITCM 59 Ko, 359 Ko libres pour les variables locales ; RAM2 12 Ko utilisés, **512 Ko libres pour l'arène de samples** (en plus des 16 Mo de PSRAM). Le moteur et l'interface tiennent largement.
 
 ### B-060 Reprise de la carte SD (`.tmp` / `.bak` + CRC)
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, sd, profil, core
@@ -165,7 +180,7 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 
 ### B-100 Clignotement et liaison série
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, matériel, outillage
-- dépend de: B-001, B-051
+- dépend de: B-001, B-002, B-051
 - références: plan_teensy.md#T11, #T14
 - terminé quand: un programme PlatformIO est téléversé, la LED clignote, un message arrive sur la série de l'ordinateur.
 

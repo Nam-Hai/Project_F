@@ -11,7 +11,9 @@ endif()
 add_library(core STATIC
   core/engine.cpp
   core/mixer.cpp
+  core/profile/binary_codec.cpp
   core/profile/profile_codec.cpp
+  core/profile/profile_status.cpp
   core/sample_player.cpp
   core/sequencer.cpp
   core/synth_kick.cpp
@@ -113,6 +115,10 @@ add_executable(test_profile tests/test_profile.cpp)
 target_link_libraries(test_profile PRIVATE core)
 add_test(NAME profile COMMAND test_profile)
 
+add_executable(test_profile_binary tests/test_profile_binary.cpp)
+target_link_libraries(test_profile_binary PRIVATE core)
+add_test(NAME profile_binary COMMAND test_profile_binary)
+
 add_executable(test_profile_store tests/test_profile_store.cpp)
 target_link_libraries(test_profile_store PRIVATE desktop_io)
 add_test(NAME profile_store COMMAND test_profile_store)
@@ -182,5 +188,17 @@ target_link_libraries(test_envelope_ui PRIVATE core)
 add_test(NAME envelope_ui COMMAND test_envelope_ui)
 
 # Banc d'essai du moteur (pire cas) : voir plan_teensy.md, T1. Pas un test : il ne vérifie rien, il mesure.
+add_library(profile_tool_lib STATIC tools/profile_tool.cpp)
+target_include_directories(profile_tool_lib PUBLIC ${CMAKE_SOURCE_DIR})
+target_link_libraries(profile_tool_lib PUBLIC core)
+
+add_executable(profile_tool tools/profile_tool_main.cpp)
+target_link_libraries(profile_tool PRIVATE profile_tool_lib)
+
+add_executable(test_profile_tool tests/test_profile_tool.cpp)
+target_link_libraries(test_profile_tool PRIVATE profile_tool_lib)
+target_compile_definitions(test_profile_tool PRIVATE PROFILES_DIR="${CMAKE_SOURCE_DIR}/profiles")
+add_test(NAME profile_tool COMMAND test_profile_tool)
+
 add_executable(bench_engine tools/bench_engine.cpp)
 target_link_libraries(bench_engine PRIVATE core)

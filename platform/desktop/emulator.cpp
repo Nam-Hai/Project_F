@@ -346,7 +346,7 @@ int main() {
     Engine               engine;
     SampleBank           bank;
     DesktopSampleLibrary library(SAMPLES_DIR, bank);
-    FileProfileStore     store(std::string(PROFILES_DIR) + "/default.json");
+    FileProfileStore     store(std::string(PROFILES_DIR) + "/default.dmp");
     UiController         ui(engine, &library, &store);
     ui.set_event_source(&engine);
     DesktopAudio         audio;  // détruit avant le moteur et les buffers

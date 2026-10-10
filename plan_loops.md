@@ -77,3 +77,5 @@ JSON standard, produit par la machine, lisible et modifiable à la main (pas de 
 
 ## Échec d'écriture : pas de copie de sécurité
 L'UI ne garde plus de copie du profil pour revenir en arrière (115 Ko de moins). Le profil en mémoire peut avoir une longueur d'avance sur le disque : si l'écriture échoue, la loop reste à son emplacement, `current_loop_` pointe dessus et l'indicateur garde son `*` ; un nouvel essai réécrit tout le profil (avec la confirmation « Ecraser ? » habituelle), sans doublon. La table de samples est nettoyée **avant** d'y ajouter les samples de la loop. Une suppression de loop dont l'écriture échoue retire la loop de la mémoire ; elle disparaît du disque à la prochaine sauvegarde réussie. Si on éteint sans réessayer, la modification est perdue.
+
+**Mise à jour (10/10/2026) : le profil est maintenant binaire.** `FileProfileStore` lit et écrit le format binaire de `core/profile/binary_codec.h` (`profiles/default.dmp`) ; le JSON ne sert plus que de format d'échange lisible (`ProfileCodec`, côté PC, outil `profile_tool` à venir, B-012). Voir `plan_teensy.md` T7.

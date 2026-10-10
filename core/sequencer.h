@@ -70,7 +70,7 @@ public:
     double countdown() const { return countdown_; }
 
     // Durée du pas, en échantillons (fractionnaire).
-    double step_length() const { return static_cast<double>(sample_rate_) * 60.0 / bpm_ / 4.0; }
+    double step_length() const { return static_cast<double>(sample_rate_) * 60.0 / static_cast<double>(bpm_) / 4.0; }
 
     // Consomme le pas dû : retourne son indice et programme le suivant.
     int fire();

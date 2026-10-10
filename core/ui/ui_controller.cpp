@@ -10,6 +10,9 @@ static_assert(cfg::MAX_STEPS <= 16, "le pattern d'une piste tient dans un uint16
 
 namespace {
 
+// Bounds an int for display: lets the compiler prove that snprintf fits the small text buffers.
+int clamp_int(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
 bool ends_with_wav(const char* s, int len) {
     if (len < 4) return false;
     const char ext[] = ".wav";
@@ -1048,7 +1051,7 @@ void UiController::load_loop(int slot) {
     if (missing == 1) notify(" 1 sample manquant");
     else if (missing > 1) {
         char text[22];
-        std::snprintf(text, sizeof text, " %d samples manquants", missing);
+        std::snprintf(text, sizeof text, " %d samples manquants", clamp_int(missing, 0, 99));
         notify(text);
     }
 }
@@ -1450,7 +1453,7 @@ void UiController::render(Canvas& c) const {
             char text[8];
             if (record_phase_ == 1) {
                 // Décompte des temps restants : 4 pendant le premier temps du pré-compte, puis 3, 2, 1.
-                std::snprintf(text, sizeof text, "PRE %d", precount_step_ < 0 ? 4 : 4 - precount_step_ / 4);
+                std::snprintf(text, sizeof text, "PRE %d", clamp_int(precount_step_ < 0 ? 4 : 4 - precount_step_ / 4, 0, 9));
             } else {
                 std::snprintf(text, sizeof text, "%s", record_phase_ == 2 ? "REC" : "KEY");
             }
@@ -1488,7 +1491,7 @@ void UiController::render_header(Canvas& c, const char* title, bool show_loop, c
     if (show_loop) {
         char loop[8];
         if (current_loop_ < 0) std::snprintf(loop, sizeof loop, "L*");
-        else std::snprintf(loop, sizeof loop, "L%d%s", current_loop_ + 1, dirty_ ? "*" : "");
+        else std::snprintf(loop, sizeof loop, "L%d%s", clamp_int(current_loop_ + 1, 0, 99), dirty_ ? "*" : "");
         c.text(bpm_x - 6 - Canvas::text_width(loop), 0, loop);
     }
 }
@@ -1595,7 +1598,8 @@ void UiController::render_pattern(Canvas& c, bool timeline) const {
             c.vline(1 + static_cast<int>(std::lround(static_cast<double>(0 - MIN_DB) / (MAX_DB - MIN_DB) * (GAUGE_W - 3))), GAUGE_Y - 1, 9);
             if (t.gain <= 0.0f) std::snprintf(value, sizeof value, "-inf");
             else {
-                const int tenths = static_cast<int>(std::lround(db * 10.0));  // integer formatting only: no float printf on the Teensy
+                // Integer formatting only (no float printf on the Teensy); bounded so that "-99.9dB" is the longest text.
+                const int tenths = clamp_int(static_cast<int>(std::lround(db * 10.0)), -999, 999);
                 const int mag    = tenths < 0 ? -tenths : tenths;
                 std::snprintf(value, sizeof value, "%c%d.%ddB", tenths < 0 ? '-' : '+', mag / 10, mag % 10);
             }
@@ -1808,8 +1812,9 @@ void UiController::render_loops(Canvas& c) const {
             std::snprintf(label, sizeof label, " Quitter sans sauv. ?");
         } else if (i < profile_.loop_count) {
             const profile::LoopData& loop = profile_.loops[i];
-            std::snprintf(label, sizeof label, "%cL%d %dbpm %d piste%s", i == current_loop_ ? '>' : ' ', i + 1,
-                          static_cast<int>(std::lround(loop.bpm)), loop.track_count, loop.track_count == 1 ? "" : "s");
+            std::snprintf(label, sizeof label, "%cL%d %dbpm %d piste%s", i == current_loop_ ? '>' : ' ', clamp_int(i + 1, 0, 99),
+                          clamp_int(static_cast<int>(std::lround(loop.bpm)), 0, 999), clamp_int(loop.track_count, 0, 99),
+                          loop.track_count == 1 ? "" : "s");
         } else {
             std::snprintf(label, sizeof label, " + Nouvelle loop");
         }

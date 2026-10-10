@@ -4,8 +4,9 @@
 
 namespace dsp {
 
-constexpr float PI     = 3.14159265358979f;
-constexpr float TWO_PI = 2.0f * PI;
+// Named *_F because the Arduino core defines the macros PI and TWO_PI.
+constexpr float PI_F     = 3.14159265358979f;
+constexpr float TWO_PI_F = 2.0f * PI_F;
 
 // Coefficient par échantillon d'une décroissance exponentielle de constante de temps tau (s).
 inline float decay_coeff(float tau_seconds, float sample_rate) {

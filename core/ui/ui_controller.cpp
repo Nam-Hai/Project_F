@@ -457,12 +457,12 @@ bool UiController::shift_step_notes(Track& t, int s, int delta) {
 
 // Touche noire de réglage relâchée : on revient à l'état d'avant (si une autre est encore tenue, c'est elle qui règle).
 void UiController::on_black_up(int index) {
-    if (index < 1 || index > 7) return;
+    if (index < 0 || index > 7) return;
     held_mask_ = static_cast<uint8_t>(held_mask_ & ~(1u << index));
 
     if (setting_ != setting_for_key(index)) return;
     setting_ = TrackSetting::None;
-    for (int k = 7; k >= 1; --k) {
+    for (int k = 7; k >= 0; --k) {
         if ((held_mask_ >> k) & 1u) {
             setting_ = setting_for_key(k);
             break;
@@ -470,10 +470,11 @@ void UiController::on_black_up(int index) {
     }
 }
 
-// Réglage de piste porté par une touche noire de la vue Pattern : 1 Quantifier, 2 Wide, 3 Balance, 4 à 7 Attack,
-// Decay, Sustain, Release.
+// Réglage de piste porté par une touche noire de la vue Pattern : 0 Gain, 1 Quantifier, 2 Wide, 3 Balance, 4 à 7
+// Attack, Decay, Sustain, Release.
 UiController::TrackSetting UiController::setting_for_key(int index) {
     switch (index) {
+        case 0:  return TrackSetting::Gain;
         case 1:  return TrackSetting::Quantize;
         case 2:  return TrackSetting::Width;
         case 3:  return TrackSetting::Balance;
@@ -483,6 +484,33 @@ UiController::TrackSetting UiController::setting_for_key(int index) {
         case 7:  return TrackSetting::Release;
         default: return TrackSetting::None;
     }
+}
+
+// Gain de la piste (touche noire 1 tenue) : 1 dB par cran, de -40 dB (en dessous : muet) à +6 dB. Une valeur qui n'est
+// pas sur la grille des dB entiers (0,8 par exemple) passe d'abord au dB entier le plus proche dans le sens du mouvement.
+void UiController::adjust_gain(int delta) {
+    Track& t = tracks_[selected_];
+
+    constexpr int MIN_DB = -40, MAX_DB = 6;
+    // Position actuelle en dB : un cran de plus que MIN_DB pour muet (gain 0).
+    double db = t.gain > 0.0f ? 20.0 * std::log10(static_cast<double>(t.gain)) : static_cast<double>(MIN_DB - 1);
+    if (db < MIN_DB) db = MIN_DB - 1;
+    double next = db;
+    for (int k = delta > 0 ? delta : -delta; k > 0; --k) {
+        next = delta > 0 ? std::floor(next + 1e-6) + 1.0 : std::ceil(next - 1e-6) - 1.0;
+    }
+    if (next > MAX_DB) next = MAX_DB;
+    if (next < MIN_DB) next = delta > 0 ? MIN_DB : MIN_DB - 1;  // sous le plancher : vers le haut on y remonte, vers le bas c'est muet
+    const float gain = next < MIN_DB ? 0.0f : static_cast<float>(std::pow(10.0, next / 20.0));
+    if (gain == t.gain) return;
+
+    Command c;
+    c.type  = Command::SetTrackGain;
+    c.track = t.engine_track;
+    c.value = gain;
+    if (!sink_.push(c)) return;
+    t.gain = gain;
+    mark_dirty();
 }
 
 // Valeurs proposées à la roue pour Attack, Decay et Release (ms) : fines près de 0, plus larges ensuite.
@@ -540,6 +568,10 @@ void UiController::adjust_envelope(int delta) {
 void UiController::adjust_track_setting(int delta) {
     if (setting_ >= TrackSetting::Attack) {
         adjust_envelope(delta);
+        return;
+    }
+    if (setting_ == TrackSetting::Gain) {
+        adjust_gain(delta);
         return;
     }
     Track&  t = tracks_[selected_];
@@ -600,7 +632,7 @@ void UiController::on_black(int index) {
         play_key(keyboard::BLACK_PITCH[index]);
         return;
     }
-    if (view_ == View::Pattern && index >= 1 && index <= 7) {  // tenir : règle un paramètre de la piste (voir setting_for_key)
+    if (view_ == View::Pattern && index >= 0 && index <= 7) {  // tenir : règle un paramètre de la piste (voir setting_for_key)
         held_mask_ = static_cast<uint8_t>(held_mask_ | (1u << index));
         setting_   = setting_for_key(index);
         audition_pending_ = false;
@@ -1386,7 +1418,7 @@ void UiController::render(Canvas& c) const {
             // est donc coupé à 13 caractères dans cette vue.
             // Un réglage de la piste tenu (touche noire) remplace la lettre par son nom, plus long : titre coupé à 8.
             static const char* const LETTERS[] = {"E", "V", "P", "T", "B"};
-            static const char* const SETTINGS[] = {"", "Quant", "Wide", "Bal", "Atk", "Dec", "Sus", "Rel"};
+            static const char* const SETTINGS[] = {"", "Quant", "Wide", "Bal", "Gain", "Atk", "Dec", "Sus", "Rel"};
             const bool held = setting_ != TrackSetting::None;
             render_header(c, tracks_[selected_].name, false, held ? SETTINGS[static_cast<int>(setting_)] : LETTERS[static_cast<int>(edit_mode_)], held ? 8 : 13);
             if (setting_ >= TrackSetting::Attack) render_envelope(c);  // la forme de l'enveloppe remplace la timeline
@@ -1551,6 +1583,16 @@ void UiController::render_pattern(Canvas& c, bool timeline) const {
             const int fill = q * (GAUGE_W - 3) / cfg::QUANTIZE_MAX;
             if (fill > 0) c.rect(1, GAUGE_Y + 1, fill, 5, true);
             std::snprintf(value, sizeof value, "%d%%", q);
+        } else if (setting == TrackSetting::Gain) {
+            // De la gauche vers la droite : muet à vide, -40 dB tout à gauche, +6 dB tout à droite ; un trait marque 0 dB.
+            constexpr int MIN_DB = -40, MAX_DB = 6;
+            const double  db     = t.gain > 0.0f ? 20.0 * std::log10(static_cast<double>(t.gain)) : static_cast<double>(MIN_DB - 1);
+            const double  pos    = t.gain > 0.0f ? (db < MIN_DB ? 0.0 : db > MAX_DB ? 1.0 : (db - MIN_DB) / (MAX_DB - MIN_DB)) : 0.0;
+            const int     fill   = static_cast<int>(std::lround(pos * (GAUGE_W - 3)));
+            if (fill > 0) c.rect(1, GAUGE_Y + 1, fill, 5, true);
+            c.vline(1 + static_cast<int>(std::lround(static_cast<double>(0 - MIN_DB) / (MAX_DB - MIN_DB) * (GAUGE_W - 3))), GAUGE_Y - 1, 9);
+            if (t.gain <= 0.0f) std::snprintf(value, sizeof value, "-inf");
+            else std::snprintf(value, sizeof value, "%+.0fdB", db);
         } else if (setting == TrackSetting::Width) {
             // Du centre (0 = inchangé) : vers la gauche pour le mono (100M = mono complet), vers la droite pour
             // élargir (100W = côtés doublés). Presque un demi-pixel par point : 48 pixels pour 100.

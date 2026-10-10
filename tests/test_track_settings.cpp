@@ -1,5 +1,6 @@
 // Réglages de la piste sur les touches noires 1 à 3 (Quantifier, Wide, Balance), tenues dans la vue Pattern :
 // la roue règle la valeur, la jauge l'affiche, le relâchement rend la main à l'état d'avant.
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -7,6 +8,7 @@
 #include <vector>
 
 #include "../config.h"
+#include "../core/engine.h"
 #include "../core/engine_state.h"
 #include "../core/ui/canvas.h"
 #include "../core/ui/ui_controller.h"
@@ -74,6 +76,8 @@ struct Fixture {
         ui.update(state, now);
     }
 };
+
+static bool near_f(float a, float b, float eps = 1e-4f) { return std::fabs(a - b) < eps; }
 
 static int lit(const Canvas& c, int x, int y, int w, int h) {
     int n = 0;
@@ -219,6 +223,168 @@ int main() {
         CHECK(g.sink.sent.empty(), "mode Edit : la roue ne fait rien sans touche tenue");
         g.feed({InputEvent::black(3), InputEvent::wheel(1)});
         CHECK(g.ui.track_balance(0) == 35, "mode Edit, touche tenue : la roue règle");
+    }
+
+    // ----- Gain (touche noire 1) -----
+    {
+        Fixture f;
+        Canvas  c;
+        f.feed({InputEvent::black(0)});
+        CHECK(f.ui.track_setting() == Set::Gain, "touche 1 : Gain");
+        f.ui.render(c);
+        // Gain 1 = 0 dB : jauge de -40 à +6 dB sur 97 pixels, 0 dB à 40/46 : 84 pixels remplis, repère à x = 85.
+        CHECK(header_text_is(c, "Gain") && value_is(c, "+0dB") && lit(c, 1, 49, 84, 5) == 84 * 5 && lit(c, 86, 49, 12, 5) == 0 && lit(c, 85, 47, 1, 9) > 0,
+              "jauge du gain : 84 pixels et repère de 0 dB, « +0dB »");
+
+        f.feed({InputEvent::wheel(1)});
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 1.0f / 20.0f)) && near_f(f.sink.last(Command::SetTrackGain).value, 1.1220185f) && f.ui.dirty(),
+              "+1 cran = +1 dB, commande envoyée, loop modifiée");
+        f.ui.render(c);
+        CHECK(value_is(c, "+1dB"), "valeur affichée : +1dB");
+        f.feed({InputEvent::wheel(100)});
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 6.0f / 20.0f)), "borné à +6 dB");
+        f.ui.render(c);
+        CHECK(value_is(c, "+6dB") && lit(c, 1, 49, 97, 5) == 97 * 5, "+6 dB : jauge pleine");
+        f.sink.sent.clear();
+        f.feed({InputEvent::wheel(1)});
+        CHECK(f.sink.sent.empty(), "à +6 dB : rien d'envoyé");
+
+        f.feed({InputEvent::wheel(-6)});
+        CHECK(near_f(f.ui.track_gain(0), 1.0f), "retour exactement à 0 dB (gain 1)");
+        f.feed({InputEvent::wheel(-3)});
+        f.ui.render(c);
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, -3.0f / 20.0f)) && value_is(c, "-3dB"), "-3 dB");
+        f.feed({InputEvent::wheel(-37)});
+        f.ui.render(c);
+        CHECK(near_f(f.ui.track_gain(0), 0.01f) && value_is(c, "-40dB") && lit(c, 1, 49, 84, 5) == 0, "-40 dB : plancher de la jauge, barre vide (seul reste le repère de 0 dB)");
+        f.feed({InputEvent::wheel(-1)});
+        f.ui.render(c);
+        CHECK(f.ui.track_gain(0) == 0.0f && f.sink.last(Command::SetTrackGain).value == 0.0f && value_is(c, "-inf"), "un cran de plus : muet (gain 0), « -inf »");
+        f.sink.sent.clear();
+        f.feed({InputEvent::wheel(-5)});
+        CHECK(f.sink.sent.empty() && f.ui.track_gain(0) == 0.0f, "muet : rien de plus bas");
+        f.feed({InputEvent::wheel(1)});
+        CHECK(near_f(f.ui.track_gain(0), 0.01f), "depuis muet, un cran remonte à -40 dB");
+        f.feed({InputEvent::black_up(0)});
+        CHECK(f.ui.track_setting() == Set::None, "relâchée : réglage terminé, valeur gardée");
+
+        // File pleine : valeur inchangée.
+        f.sink.budget = 0;
+        f.feed({InputEvent::black(0), InputEvent::wheel(5), InputEvent::black_up(0)});
+        CHECK(near_f(f.ui.track_gain(0), 0.01f), "file pleine : valeur inchangée");
+    }
+    {
+        // Un gain qui n'est pas sur la grille des dB entiers (0,8 = -1,94 dB, venu d'un fichier) : arrondi dans le sens du cran.
+        RecordingSink sink;
+        EngineState   state;
+        UiController  ui(sink);
+        ui.add_track("a.wav", 2, 0x0001, 0.8f);
+        ui.update(state, 0);
+        ui.handle(InputEvent::ok());
+        ui.handle(InputEvent::black(0));
+        Canvas c;
+        ui.render(c);
+        CHECK(value_is(c, "-2dB"), "0,8 s'affiche -2dB");
+        ui.handle(InputEvent::wheel(1));
+        CHECK(near_f(ui.track_gain(0), std::pow(10.0f, -1.0f / 20.0f)), "un cran vers le haut : -1 dB (pas de retour sur la même valeur)");
+        ui.handle(InputEvent::black_up(0));
+        UiController ui2(sink);
+        ui2.add_track("a.wav", 2, 0x0001, 0.8f);
+        ui2.update(state, 0);
+        ui2.handle(InputEvent::ok());
+        ui2.handle(InputEvent::black(0));
+        ui2.handle(InputEvent::wheel(-1));
+        CHECK(near_f(ui2.track_gain(0), std::pow(10.0f, -2.0f / 20.0f)), "un cran vers le bas : -2 dB");
+        // Un gain très bas mais pas nul (0,005 = -46 dB) : affiché en dB ; vers le haut on remonte au plancher, vers le bas c'est muet.
+        UiController ui5(sink);
+        ui5.add_track("a.wav", 2, 0x0001, 0.005f);
+        ui5.update(state, 0);
+        ui5.handle(InputEvent::ok());
+        ui5.handle(InputEvent::black(0));
+        ui5.render(c);
+        CHECK(value_is(c, "-46dB"), "0,005 s'affiche -46dB (pas « -inf » : ce n'est pas muet)");
+        ui5.handle(InputEvent::wheel(1));
+        CHECK(near_f(ui5.track_gain(0), 0.01f), "un cran vers le haut : remonte au plancher de -40 dB");
+        UiController ui6(sink);
+        ui6.add_track("a.wav", 2, 0x0001, 0.005f);
+        ui6.update(state, 0);
+        ui6.handle(InputEvent::ok());
+        ui6.handle(InputEvent::black(0));
+        ui6.handle(InputEvent::wheel(-1));
+        CHECK(ui6.track_gain(0) == 0.0f, "un cran vers le bas : muet");
+        // Un gain de départ de 0 est muet.
+        UiController ui3(sink);
+        ui3.add_track("a.wav", 2, 0x0001, 0.0f);
+        ui3.update(state, 0);
+        ui3.handle(InputEvent::ok());
+        ui3.handle(InputEvent::black(0));
+        ui3.render(c);
+        CHECK(value_is(c, "-inf"), "gain 0 : « -inf »");
+        // Mode Clavier : la touche 1 joue une note.
+        UiController ui4(sink);
+        ui4.add_track("a.wav", 2, 0x0001);
+        ui4.update(state, 0);
+        ui4.handle(InputEvent::ok());
+        ui4.handle(InputEvent::black(9));
+        sink.sent.clear();
+        ui4.handle(InputEvent::black(0));
+        ui4.handle(InputEvent::black_up(0));
+        CHECK(ui4.track_setting() == Set::None && sink.count(Command::Note) == 1, "mode Clavier : la touche 1 joue une note, aucun gain");
+    }
+    {
+        // Avec le vrai moteur : +6 dB réglés à la touche font sonner la note deux fois plus fort (1,995) ; borne du moteur.
+        static const int16_t impulse[] = {16384, 0};
+        auto out_of = [](float v) { return std::tanh(cfg::MASTER_GAIN * v); };
+        auto run = [&](int notches) {
+            Engine       e;
+            UiController ui(e);
+            Command      c;
+            c.type   = Command::SetTrackSample;
+            c.track  = 2;
+            c.data   = impulse;
+            c.length = 2;
+            e.push(c);
+            ui.add_track("a.wav", 2, 0);
+            ui.update(e.state(), 0);
+            ui.handle(InputEvent::ok());
+            ui.handle(InputEvent::black(0));
+            ui.handle(InputEvent::wheel(notches));
+            ui.handle(InputEvent::black_up(0));
+            ui.handle(InputEvent::black(9));  // mode Clavier : la touche joue une note (pitch +10 : première image inchangée)
+            std::vector<float> l(8), r(8);
+            e.render(l.data(), r.data(), 8);
+            return l[0];
+        };
+        CHECK(near_f(run(6), out_of(0.5f * std::pow(10.0f, 6.0f / 20.0f))), "+6 dB : la note sort à 1,995 fois le niveau");
+        CHECK(near_f(run(-6), out_of(0.5f * std::pow(10.0f, -6.0f / 20.0f))), "-6 dB : la note sort à 0,5 fois le niveau");
+        CHECK(run(-100) == 0.0f, "muet : silence");
+
+        // Le moteur borne SetTrackGain à 0..4.
+        Engine e;
+        Command sc;
+        sc.type   = Command::SetTrackSample;
+        sc.track  = 2;
+        sc.data   = impulse;
+        sc.length = 2;
+        e.push(sc);
+        Command g;
+        g.type  = Command::SetTrackGain;
+        g.track = 2;
+        g.value = 50.0f;
+        e.push(g);
+        Command n;
+        n.type  = Command::Note;
+        n.track = 2;
+        n.value = 127.0f;
+        e.push(n);
+        std::vector<float> l(4), r(4);
+        e.render(l.data(), r.data(), 4);
+        CHECK(near_f(l[0], out_of(0.5f * 4.0f)), "gain 50 demandé : borné à 4");
+        g.value = -3.0f;
+        e.push(g);
+        e.push(n);
+        e.render(l.data(), r.data(), 4);
+        CHECK(l[0] == 0.0f, "gain négatif demandé : 0 (pas d'inversion de phase)");
     }
 
     // ----- Plusieurs touches tenues -----

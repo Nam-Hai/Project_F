@@ -110,6 +110,7 @@ public:
     int      step_pan(int track, int step) const { return tracks_[track].step_pan[step]; }  // balance de la note principale
     int      track_width(int track) const { return tracks_[track].width; }                  // largeur stéréo de la piste
     int      track_balance(int track) const { return tracks_[track].balance; }              // balance de base de la piste
+    float    track_gain(int track) const { return tracks_[track].gain; }                   // gain de la piste (1 = inchangé)
     int      track_attack(int track) const { return tracks_[track].attack; }                // enveloppe ADSR de la piste (ms)
     int      track_decay(int track) const { return tracks_[track].decay; }
     int      track_sustain(int track) const { return tracks_[track].sustain; }              // en %
@@ -118,7 +119,7 @@ public:
     Hit      extra_hit(int track, int step, int i) const { return tracks_[track].extra[step][i]; }
     int      quantize(int track) const { return tracks_[track].quantize; }
     // Réglage de la piste tenu dans la vue Pattern (touches noires 1 à 3) : la roue le règle, la jauge l'affiche.
-    enum class TrackSetting : uint8_t { None, Quantize, Width, Balance, Attack, Decay, Sustain, Release };
+    enum class TrackSetting : uint8_t { None, Quantize, Width, Balance, Gain, Attack, Decay, Sustain, Release };
     TrackSetting track_setting() const { return setting_; }
     int      record_phase() const { return record_phase_; }  // 0 repos, 1 pré-compte, 2 prise
     bool     can_undo_take() const { return have_snapshot_; }
@@ -187,6 +188,7 @@ private:
     void on_black_up(int index);
     static TrackSetting setting_for_key(int index);
     void adjust_envelope(int delta);
+    void adjust_gain(int delta);
     void render_envelope(Canvas& c) const;
     void toggle_record();
     void apply_step_event(const StepEvent& ev);

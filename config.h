@@ -29,6 +29,9 @@ constexpr int   QUANTIZE_MAX     = 100;
 constexpr int   PAN_MIN          = -50;
 constexpr int   PAN_MAX          = 50;
 
+// Gain d'une piste : de 0 (muet) à 4 (+12 dB) ; 1 = inchangé. L'interface le règle en dB, de -40 (muet en dessous) à +6.
+constexpr float TRACK_GAIN_MAX = 4.0f;
+
 // Enveloppe ADSR d'une piste : temps en millisecondes (0 = immédiat), sustain en %. Par défaut, un Release court
 // (5 ms) fait finir la note remplacée en douceur au lieu de la couper net (plus de clic).
 constexpr int   ENV_MS_MAX               = 2000;

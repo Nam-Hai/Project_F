@@ -139,7 +139,7 @@ int main() {
         CHECK(f->ui.view() == View::Pattern && f->ui.edit_mode() == UiController::EditMode::Velocity, "le mode Velocity est conservé");
         f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::black(9)});
         CHECK(f->ui.view() == View::Keyboard, "l'entrée marche dans n'importe quel mode");
-        // La première touche noire est libre : elle ne fait plus rien dans la vue Pattern.
+        // La première touche noire règle le gain de la piste (touche tenue) : elle n'entre pas en mode Clavier / Rec.
         auto g = make();
         g->feed({InputEvent::ok(), InputEvent::black(0), InputEvent::black_up(0)});
         CHECK(g->ui.view() == View::Pattern && g->sink.sent.empty(), "la 1re touche noire n'entre plus en mode Clavier / Rec");
@@ -168,7 +168,7 @@ int main() {
         f->feed({InputEvent::black(10), InputEvent::black(200)});
         CHECK(f->ui.view() == View::Tracks && f->sink.sent.empty(), "vue Pistes : les noires 1 à 9 ne font rien");
         f->feed({InputEvent::ok()});
-        for (int j : {0, 8}) f->feed({InputEvent::black(j), InputEvent::black_up(j)});  // 2 à 8 : réglages de la piste
+        for (int j : {8}) f->feed({InputEvent::black(j), InputEvent::black_up(j)});  // 1 à 8 : réglages de la piste
         CHECK(f->ui.view() == View::Pattern && f->sink.sent.empty(), "vue Pattern : les noires sans rôle ne font rien");
 
         f->feed({InputEvent::menu(), InputEvent::black(9), InputEvent::black(4)});

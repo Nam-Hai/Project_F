@@ -147,9 +147,15 @@ int main() {
         f.feed({InputEvent::black_up(6)});
         CHECK(f.ui.track_setting() == Set::Width, "Wide reprend la main");
         f.feed({InputEvent::black_up(2)});
-        // La touche 9 (index 8) et la 1re (index 0) n'ont pas de rôle dans la vue Pattern.
-        f.feed({InputEvent::black(8), InputEvent::black(0)});
-        CHECK(f.ui.track_setting() == Set::None && f.sink.sent.empty(), "touches 1 et 9 : sans rôle");
+        // La touche 9 (index 8) n'a pas de rôle dans la vue Pattern ; la 1re règle le gain.
+        f.feed({InputEvent::black(8), InputEvent::black_up(8)});
+        CHECK(f.ui.track_setting() == Set::None && f.sink.sent.empty(), "touche 9 : sans rôle");
+        f.feed({InputEvent::black(0), InputEvent::black(4)});
+        CHECK(f.ui.track_setting() == Set::Attack, "Attack après Gain");
+        f.feed({InputEvent::black_up(4)});
+        CHECK(f.ui.track_setting() == Set::Gain, "Gain reprend la main");
+        f.feed({InputEvent::black_up(0)});
+        CHECK(f.ui.track_setting() == Set::None, "tout relâché");
         // Quitter la vue abandonne le réglage.
         f.feed({InputEvent::black(5), InputEvent::back()});
         CHECK(f.ui.view() == View::Tracks && f.ui.track_setting() == Set::None, "Back : réglage abandonné");

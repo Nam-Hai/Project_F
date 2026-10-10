@@ -26,6 +26,9 @@ Quatre clés facultatives par piste, écrites seulement hors défaut (0, 0, 100,
 * Chargement (une commande par réglage non défaut, par petits paquets) et sauvegarde conservent tout.
 * **Émulateur** : étiquettes `A`, `D`, `S`, `R` au-dessus des touches 5 à 8.
 
+## 4b. Gain de la piste (touche noire 1)
+La **1re touche noire**, tenue dans la vue Pattern, règle le **gain de la piste** (le gain existait déjà dans le profil et le moteur, sans réglage dans l'interface). Réglage en **dB**, 1 dB par cran de roue, de **-40 dB** (en dessous : **muet**, gain 0, affiché `-inf`) à **+6 dB** ; 0 dB = gain 1 = inchangé. Un gain venu d'un fichier qui n'est pas sur la grille des dB entiers (0,8 = -1,94 dB, affiché `-2dB`) passe d'abord au dB entier le plus proche dans le sens du cran ; un gain très bas mais pas nul (0,005 = -46 dB) est affiché en dB, remonte au plancher vers le haut et devient muet vers le bas. Jauge du bas : barre de la gauche vers la droite (-40 dB à vide, +6 dB pleine) avec un **repère à 0 dB** ; en-tête `Gain`, valeur `+0dB` / `-3dB` / `+6dB` / `-inf`. Le moteur borne `SetTrackGain` à **0..4** (+12 dB) : un gain négatif inverserait la phase. Mode Clavier / Rec : la touche joue une note. Les touches noires 1 à 8 sont maintenant toutes des réglages de piste dans la vue Pattern (1 Gain, 2 Quantifier, 3 Wide, 4 Balance, 5 à 8 ADSR), la 10e entre en mode Clavier / Rec, la 9e est libre. Tests : `test_track_settings`.
+
 ## 5. Tests
 `test_envelope` (niveaux de chaque étage à l'échantillon près, Release depuis un niveau partiel, saut mesuré à la relance d'un 808 : **0,3 sans Release, moins de 0,03 avec**, queues, vol de queue, sample changé, pitch des queues, bornes, commandes, séquenceur de bout en bout), `test_envelope_ui` (touches, roue, valeurs hors liste, forme à l'écran, chargement et sauvegarde, vrai moteur), `test_profile`, `test_canvas` (segments).
 

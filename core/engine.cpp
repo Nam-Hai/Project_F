@@ -81,7 +81,8 @@ void Engine::apply(const Command& c) {
             if (track_ok && step_ok) seq_.pattern().on[c.track][c.step] ^= 1;
             break;
         case Command::SetTrackGain:
-            if (track_ok) gains_[c.track] = c.value;
+            // Borné à 0..4 (mute à +12 dB) : un gain négatif inverserait la phase, un gain énorme saturerait la sortie.
+            if (track_ok) gains_[c.track] = c.value > 0.0f ? (c.value < cfg::TRACK_GAIN_MAX ? c.value : cfg::TRACK_GAIN_MAX) : 0.0f;
             break;
         case Command::SetTrackPitch:
             if (track_ok) players_[c.track].set_pitch(c.value);

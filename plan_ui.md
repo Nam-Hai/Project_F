@@ -23,7 +23,7 @@ Les entrées (roue, boutons, potard) font partie de l'UI simulée : sur Teensy, 
 | Bouton **Play/Stop** | appui | transport |
 | Potard **BPM** | valeur 0..1 | tempo |
 | 16 boutons de pas | appui sur le pas 0..15 | bascule le pas dans la vue Pattern ; touches blanches du clavier (voir `plan_keyboard.md`) |
-| 10 boutons de touches noires (prévus) | appui sur la touche 0..9 | clavier de piano ; la première ouvre la vue Clavier |
+| 10 boutons de touches noires (prévus) | appui sur la touche 0..9 | clavier de piano ; la 10e passe en mode Clavier / Rec ; 2 à 4 (tenues) règlent la piste |
 
 Les boutons de pas ont une LED dans l'émulateur (état du pas, pas courant), mais **le premier hardware n'en aura pas** : l'écran doit donc rester le retour principal.
 
@@ -104,10 +104,10 @@ Ajouter           120 >
 * `Command::SetTrackPitch`, `Command::SetTrackSample(piste, pointeur, longueur)` : le fichier est chargé dans le thread principal, le callback ne fait que brancher le pointeur sur le `SamplePlayer` de la piste (le moteur en possède un par piste). Une piste est « ajoutée » en lui donnant un sample, et l'UI choisit l'index libre.
 * `Command::ClearTrack` : supprime la piste (voix, pattern, gain, pitch).
 * **Propriété des buffers** (à la place du pool prévu) : un pointeur donné au moteur reste valide jusqu'à ce que le moteur le rende par `Engine::pop_released()` (remplacement ou suppression). Une seconde file SPSC audio -> UI porte ces pointeurs, sans compteur d'acquittement ni course possible. L'UI doit la vider régulièrement (64 entrées).
-* **`SampleBank`** (PC, `platform/desktop/sample_bank.*`) : possède les buffers chargés ; `load()` puis, quand le moteur les rend, `release()`. Sur Teensy, l'équivalent sera un tampon en RAM2 / PSRAM.
+* **`SampleBank`** (PC, `platform/desktop/sample_bank.*`) : possède les buffers chargés ; `load()` puis, quand le moteur les rend, `release()`. Sur Teensy, l'équivalent sera un tampon en **PSRAM** (retenue pour le projet : voir le récapitulatif) pour les gros samples, en RAM2 pour les petits ; l'allocation des tampons reste à cet unique endroit. Un sample peut être stéréo : la banque mémorise ses canaux (`SampleBank::channels`, `SampleLibrary::channels`), `length` est un nombre d'images (plan_stereo.md).
 * **`EngineState::triggers[piste]`** : compteur de trigs par piste (indicateur de jeu dans la liste).
 * **`SampleLibrary`** (plateforme) : lister les `.wav` disponibles (disque sur PC, SD sur Teensy) : à faire avec la vue Ajout (étape 5).
-* **`MAX_TRACKS`** : 16 côté moteur (constante de `config.h`, à augmenter si besoin). Le vrai plafond sur Teensy sera la RAM disponible pour les samples (PSRAM en option), pas le nombre de pistes.
+* **`MAX_TRACKS`** : 16 côté moteur (constante de `config.h`, à augmenter si besoin). Le vrai plafond sur Teensy sera la mémoire disponible pour les samples (la PSRAM, retenue : 8 à 16 Mo, et d'autant moins qu'ils sont stéréo), pas le nombre de pistes.
 
 ## 6. Étapes
 1. **Moteur live : FAIT.** `SetTrackSample`, `SetTrackPitch`, `ClearTrack`, restitution des buffers (`pop_released`), compteur de trigs par piste, `SampleBank`. Testé sans UI (`test_live`, `test_sample`). `main.cpp` charge maintenant la loop par ces mêmes commandes.

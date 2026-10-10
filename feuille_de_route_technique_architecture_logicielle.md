@@ -133,12 +133,13 @@ Project_F/
 * [ ] `SynthSnare`, `SynthHiHat` : hors périmètre pour l'instant.
 
 ### Phase 3 : Lecteur de Samples WAV (priorité actuelle)
-* [x] Parser WAV (PCM 16 bits, mono, 44,1 kHz ; refus explicite des autres formats).
+* [x] Parser WAV (PCM 16 bits ou flottant 32 bits, mono ou stéréo, 44,1 kHz ; refus explicite des autres formats).
 * [x] Chargement d'un `.wav` depuis le disque vers un tableau en RAM (PC).
 * [x] Moteur de lecture avec phase flottante et interpolation linéaire, pitch par piste.
-* [ ] Chargement depuis la carte microSD vers RAM2 / PSRAM au démarrage (Teensy).
+* [ ] Chargement depuis la carte microSD vers la **PSRAM** (retenue : voir le récapitulatif) ou la RAM2 pour les petits samples, à l'ouverture d'une loop (Teensy) : allocation des tampons de samples à un seul endroit, détection de la PSRAM au démarrage.
+* [ ] **Mémoire des samples : sujet à traiter (au plus tard avec le portage Teensy).** Aujourd'hui, ouvrir une loop charge les nouveaux samples **avant** de libérer les anciens (`ClearAll` -> `pop_released` -> `SampleBank::release`) : le pic mémoire est le double d'une loop, et un fichier utilisé par deux pistes est chargé deux fois. Sur Teensy, des allocations et libérations répétées de gros tampons en PSRAM la fragmentent. Pistes : (1) **partager** les tampons identiques entre pistes (un chargement par fichier, comptage de références) : faisable dès maintenant sur PC ; (2) une **arène** en PSRAM (curseur d'allocation remis à zéro à l'ouverture d'une loop, une fois les anciens tampons rendus par le moteur) : plus de fragmentation, pic d'une seule loop, au prix d'un court silence (0,1 à 0,5 s) pendant la lecture de la SD et en vérifiant l'existence des fichiers avant de vider ; l'interface `SampleLibrary` ne change pas. Voir aussi le **tampon du texte JSON** (jusqu'à 216 Ko au pire cas) à écrire / lire par morceaux directement sur la SD, et l'avertissement de `plan_record.md`.
 * [ ] Sélection du sample d'une piste depuis l'UI (liste des fichiers disponibles).
-* [ ] Conversion automatique des formats (stéréo, autre fréquence), si nécessaire.
+* [x] Samples stéréo et flottants lus tels quels (plan_stereo.md, S1 et S2). * [ ] Autre fréquence d'échantillonnage (rééchantillonnage) : hors périmètre pour l'instant.
 
 ### Phase 4 : Mixeur & Traitement Dynamique
 * [x] Mixeur $N$ voies en $float32$ avec gain par piste.

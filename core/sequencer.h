@@ -6,13 +6,14 @@
 #include "hit.h"
 
 // Grille de pas : on[piste][pas] != 0 -> trig. Chaque pas a une note principale (vélocité 1..127, pitch en
-// demi-tons -12..12, décalage `offset` en 1/128 de pas) et jusqu'à 3 notes supplémentaires. Ces valeurs
+// demi-tons -12..12, pan -50..50, décalage `offset` en 1/128 de pas) et jusqu'à 3 notes supplémentaires. Ces valeurs
 // sont conservées même quand le pas est éteint. Un pas allumé sans décalage ni note supplémentaire joue
 // une seule note pile sur le pas. `quantize[piste]` (0..100 %) rapproche les décalages de la grille.
 struct Pattern {
     uint8_t on[cfg::MAX_TRACKS][cfg::MAX_STEPS]       = {};
     uint8_t velocity[cfg::MAX_TRACKS][cfg::MAX_STEPS];
     int8_t  pitch[cfg::MAX_TRACKS][cfg::MAX_STEPS]    = {};
+    int8_t  pan[cfg::MAX_TRACKS][cfg::MAX_STEPS]      = {};
     int8_t  offset[cfg::MAX_TRACKS][cfg::MAX_STEPS]   = {};
     uint8_t extra_count[cfg::MAX_TRACKS][cfg::MAX_STEPS] = {};
     Hit     extra[cfg::MAX_TRACKS][cfg::MAX_STEPS][cfg::MAX_EXTRA_HITS];
@@ -24,15 +25,21 @@ struct Pattern {
 
     // Piste vide, valeurs par défaut (vélocité maximale, pitch 0, pile sur la grille, quantification 0).
     void reset_track(int t) {
+        clear_steps(t);
+        quantize[t] = 0;
+    }
+
+    // Vide les pas de la piste (notes, vélocités, pitchs, balances, décalages, roulements) ; la quantification reste.
+    void clear_steps(int t) {
         for (int s = 0; s < cfg::MAX_STEPS; ++s) {
             on[t][s]          = 0;
             velocity[t][s]    = static_cast<uint8_t>(cfg::VELOCITY_MAX);
             pitch[t][s]       = 0;
+            pan[t][s]         = 0;
             offset[t][s]      = 0;
             extra_count[t][s] = 0;
             for (Hit& h : extra[t][s]) h = Hit{};
         }
-        quantize[t] = 0;
     }
 };
 

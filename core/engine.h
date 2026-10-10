@@ -42,7 +42,7 @@ public:
     const EngineState& state() const { return state_; }
 
     // Déclenche une piste immédiatement. Appel réservé au thread audio (ou hors audio actif).
-    void trigger(int track, float velocity = 1.0f, float pitch_ratio = 1.0f);
+    void trigger(int track, float velocity = 1.0f, float pitch_ratio = 1.0f, int pan = 0);
 
     // Produit `frames` échantillons stéréo (planaires), taille quelconque. Thread audio.
     void render(float* left, float* right, int frames);
@@ -51,10 +51,10 @@ private:
     void apply(const Command& cmd);
     void fire_step();
     void play_step(int track, int step);
-    void schedule(double countdown, int track, int step, int velocity, int pitch);
+    void schedule(double countdown, int track, int step, int velocity, int pitch, int pan);
     void start_record(int track);
     void end_record();
-    void record_note(int velocity, int pitch);
+    void record_note(int velocity, int pitch, int pan);
     void record_hit(int step, const Hit& hit);
     void send_step_event(int step);
     void fire_pending();
@@ -73,6 +73,7 @@ private:
         uint8_t step      = 0;  // pas auquel la note appartient (une prise qui le remplace la retire)
         uint8_t velocity  = 0;
         int8_t  pitch     = 0;
+        int8_t  pan       = 0;
     };
     static constexpr int MAX_PENDING = 256;  // au plus 16 pistes x 4 notes x 2 pas à programmer par frontière
     Pending pending_[MAX_PENDING];
@@ -107,8 +108,10 @@ private:
     SamplePlayer   preview_;                      // écoute d'un sample avant de l'ajouter (hors pistes)
     const int16_t* preview_sample_ = nullptr;
     SamplePlayer   players_[cfg::MAX_TRACKS];
+    int8_t         track_balance_[cfg::MAX_TRACKS] = {};  // balance de base de chaque piste, -50..50
     const int16_t* track_sample_[cfg::MAX_TRACKS] = {};  // buffer actuellement lu par la piste
     Voice*         voices_[cfg::MAX_TRACKS] = {};
     float          gains_[cfg::MAX_TRACKS];
-    float          scratch_[cfg::BLOCK];
+    float          scratch_[cfg::BLOCK];        // voie en cours, canal gauche
+    float          scratch_right_[cfg::BLOCK];  // voie en cours, canal droit
 };

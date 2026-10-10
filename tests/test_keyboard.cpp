@@ -1,4 +1,4 @@
-// Clavier de piano : disposition, entrée par la première touche noire, jeu dans la vue, dessin.
+// Mode Clavier / Rec : disposition des 24 touches, entrée par la 10e touche noire, jeu, écran (timeline du pattern).
 #include <algorithm>
 #include <cstdio>
 #include <functional>
@@ -61,19 +61,16 @@ struct Fixture {
     void feed(std::initializer_list<InputEvent> events) {
         for (const InputEvent& e : events) ui.handle(e);
     }
-    // Entre dans la vue Clavier sur la piste « a » depuis la vue Pattern, puis laisse passer la lueur de l'entrée.
+    // Entre en mode Clavier / Rec sur la piste « a » depuis la vue Pattern.
     void enter_from_pattern() {
-        feed({InputEvent::ok(), InputEvent::black(0)});
+        feed({InputEvent::ok(), InputEvent::black(UiController::REC_BLACK_KEY)});
         sink.sent.clear();
-        tick(UiController::LIT_MS + 50);
     }
 };
 
 static std::unique_ptr<Fixture> make() { return std::unique_ptr<Fixture>(new Fixture); }
 
 using View = UiController::View;
-
-static bool lit(const Canvas& c, int x, int y) { return c.get_pixel(x, y); }
 
 static bool region_empty(const Canvas& c, int x0, int y0, int x1, int y1) {
     for (int y = y0; y < y1; ++y)
@@ -88,11 +85,6 @@ static bool same_rows(const Canvas& a, const Canvas& b, int y0, int y1) {
             if (a.get_pixel(x, y) != b.get_pixel(x, y)) return false;
     return true;
 }
-
-// Dessin : haut du clavier, hauteur des blanches et des noires (voir render_keyboard).
-constexpr int TOP = 16;
-
-static int black_x(int j) { return keyboard::BLACK_LEFT_WHITE[j] * 8 + 5; }  // bord gauche de la noire j
 
 int main() {
     // ----- Disposition : la table des 24 touches -----
@@ -131,57 +123,61 @@ int main() {
         CHECK(gaps_ok, "noires placées comme sur un piano (pas entre Mi-Fa ni Si-Do)");
     }
 
-    // ----- Entrée : la première touche noire, depuis la vue Pattern -----
+    // ----- Entrée : la 10e touche noire, depuis la vue Pattern -----
     {
         auto f = make();
-        f->feed({InputEvent::ok(), InputEvent::black(0)});  // piste « a » ouverte, puis la première noire
-        CHECK(f->ui.view() == View::Keyboard && f->ui.keyboard_track() == 0, "la première noire ouvre la vue Clavier sur la piste ouverte");
+        f->feed({InputEvent::ok(), InputEvent::black(9)});  // piste « a » ouverte, puis la 10e noire
+        CHECK(f->ui.view() == View::Keyboard && f->ui.keyboard_track() == 0, "la 10e noire entre en mode Clavier / Rec sur la piste ouverte");
         CHECK(f->sink.sent.size() == 1 && f->sink.at(0).type == Command::Note && f->sink.at(0).track == 2 &&
-                  f->sink.at(0).value == 127.0f && f->sink.at(0).pitch == -11,
-              "et joue sa note (Do dièse grave, -11) sur la piste moteur 2, vélocité 127");
+                  f->sink.at(0).value == 127.0f && f->sink.at(0).pitch == 10,
+              "et joue sa note (+10) sur la piste moteur 2, vélocité 127");
         f->feed({InputEvent::back()});
         CHECK(f->ui.view() == View::Pattern && f->ui.selected_track() == 0, "Back : retour à la vue Pattern");
 
         // Le mode d'édition survit à l'aller-retour.
-        f->feed({InputEvent::mode(), InputEvent::black(0), InputEvent::back()});
+        f->feed({InputEvent::mode(), InputEvent::black(9), InputEvent::back()});
         CHECK(f->ui.view() == View::Pattern && f->ui.edit_mode() == UiController::EditMode::Velocity, "le mode Velocity est conservé");
-        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::black(0)});
+        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::black(9)});
         CHECK(f->ui.view() == View::Keyboard, "l'entrée marche dans n'importe quel mode");
+        // La première touche noire est libre : elle ne fait plus rien dans la vue Pattern.
+        auto g = make();
+        g->feed({InputEvent::ok(), InputEvent::black(0), InputEvent::black_up(0)});
+        CHECK(g->ui.view() == View::Pattern && g->sink.sent.empty(), "la 1re touche noire n'entre plus en mode Clavier / Rec");
     }
 
     // ----- Entrée depuis la vue Pistes : piste sous le curseur seulement -----
     {
         auto f = make();
-        f->feed({InputEvent::wheel(1), InputEvent::black(0)});  // curseur sur « b » (piste moteur 5)
-        CHECK(f->ui.view() == View::Keyboard && f->ui.keyboard_track() == 1, "depuis la liste : le clavier s'ouvre sur la piste sous le curseur");
-        CHECK(f->sink.at(0).type == Command::Note && f->sink.at(0).track == 5 && f->sink.at(0).pitch == -11, "la note part sur la piste moteur de cette piste");
+        f->feed({InputEvent::wheel(1), InputEvent::black(9)});  // curseur sur « b » (piste moteur 5)
+        CHECK(f->ui.view() == View::Keyboard && f->ui.keyboard_track() == 1, "depuis la liste : le mode s'ouvre sur la piste sous le curseur");
+        CHECK(f->sink.at(0).type == Command::Note && f->sink.at(0).track == 5 && f->sink.at(0).pitch == 10, "la note part sur la piste moteur de cette piste");
         f->feed({InputEvent::back()});
         CHECK(f->ui.view() == View::Tracks && f->ui.cursor() == 1, "Back : retour à la liste, curseur inchangé");
 
         auto g = make();
-        g->feed({InputEvent::wheel(-5), InputEvent::black(0)});  // ligne de titre
+        g->feed({InputEvent::wheel(-5), InputEvent::black(9)});  // ligne de titre
         CHECK(g->ui.view() == View::Tracks && g->sink.sent.empty(), "ligne de titre : rien");
-        g->feed({InputEvent::wheel(9), InputEvent::black(0)});  // « + Ajouter piste »
+        g->feed({InputEvent::wheel(9), InputEvent::black(9)});  // « + Ajouter piste »
         CHECK(g->ui.view() == View::Tracks && g->sink.sent.empty(), "« Ajouter piste » : rien");
     }
 
     // ----- Les autres touches noires, et les autres vues, n'ont aucun effet -----
     {
         auto f = make();
-        for (int j = 1; j < 10; ++j) f->feed({InputEvent::black(j)});
+        for (int j = 0; j < 9; ++j) f->feed({InputEvent::black(j), InputEvent::black_up(j)});
         f->feed({InputEvent::black(10), InputEvent::black(200)});
-        CHECK(f->ui.view() == View::Tracks && f->sink.sent.empty(), "vue Pistes : les noires 2 à 10 ne font rien");
+        CHECK(f->ui.view() == View::Tracks && f->sink.sent.empty(), "vue Pistes : les noires 1 à 9 ne font rien");
         f->feed({InputEvent::ok()});
-        for (int j = 1; j < 10; ++j) f->feed({InputEvent::black(j)});
-        CHECK(f->ui.view() == View::Pattern && f->sink.sent.empty(), "vue Pattern : les noires 2 à 10 ne font rien");
+        for (int j : {0, 4, 5, 6, 7, 8}) f->feed({InputEvent::black(j), InputEvent::black_up(j)});  // 2 à 4 : réglages de la piste
+        CHECK(f->ui.view() == View::Pattern && f->sink.sent.empty(), "vue Pattern : les noires sans rôle ne font rien");
 
-        f->feed({InputEvent::menu(), InputEvent::black(0), InputEvent::black(4)});
-        CHECK(f->ui.view() == View::Menu && f->sink.sent.empty(), "menu : la première noire est ignorée aussi");
-        f->feed({InputEvent::back(), InputEvent::back(), InputEvent::wheel(-5), InputEvent::ok(), InputEvent::black(0)});
+        f->feed({InputEvent::menu(), InputEvent::black(9), InputEvent::black(4)});
+        CHECK(f->ui.view() == View::Menu && f->sink.sent.empty(), "menu : la 10e noire est ignorée aussi");
+        f->feed({InputEvent::back(), InputEvent::back(), InputEvent::wheel(-5), InputEvent::ok(), InputEvent::black(9)});
         CHECK(f->ui.view() == View::Loops && f->sink.sent.empty(), "liste des loops : ignorée");
     }
 
-    // ----- Jeu dans la vue Clavier -----
+    // ----- Jeu en mode Clavier / Rec -----
     {
         auto f = make();
         f->enter_from_pattern();
@@ -224,6 +220,7 @@ int main() {
         CHECK(f->sink.count(Command::StartRecord) == 1 && f->sink.count(Command::Play) == 0 && f->sink.at(0).track == 2 &&
                   f->ui.view() == View::Keyboard,
               "Play lance la prise sur la piste du clavier");
+        CHECK(f->ui.pattern_bits(0) == 0 && f->ui.dirty(), "lancer la prise efface le pattern de la piste (modèle) : la loop est modifiée");
         f->feed({InputEvent::pot_bpm(0.0f)});
         CHECK(f->sink.count(Command::SetBpm) == 1, "le BPM aussi");
 
@@ -233,103 +230,77 @@ int main() {
         CHECK(f->sink.count(Command::StopRecord) == 1, "quitter le clavier arrête la prise");
         f->sink.sent.clear();
         f->feed({InputEvent::step(3)});
-        CHECK(f->sink.count(Command::SetStep) == 1 && f->sink.count(Command::Note) == 0 && f->ui.pattern_bits(0) == 0x0019,
-              "de retour en vue Pattern, un bouton de pas bascule un pas");
+        CHECK(f->sink.count(Command::SetStep) == 1 && f->sink.count(Command::Note) == 0 && f->ui.pattern_bits(0) == 0x0008,
+              "de retour en vue Pattern, un bouton de pas bascule un pas (le pattern avait été effacé par la prise)");
     }
 
-    // ----- File de commandes pleine : pas de plantage, pas de lueur -----
+    // ----- File de commandes pleine : pas de plantage -----
     {
         auto f = make();
         f->feed({InputEvent::ok()});
         f->sink.budget = 0;
-        f->feed({InputEvent::black(0)});
-        CHECK(f->ui.view() == View::Keyboard && f->sink.sent.empty(), "file pleine : la vue s'ouvre, aucune note n'est envoyée");
-        Canvas c;
-        f->ui.render(c);
-        CHECK(lit(c, black_x(0) + 2, TOP + 10), "la touche n'est pas inversée : la note n'est pas partie");
+        f->feed({InputEvent::black(9)});
+        CHECK(f->ui.view() == View::Keyboard && f->sink.sent.empty(), "file pleine : le mode s'ouvre, aucune note n'est envoyée");
         f->feed({InputEvent::step(3), InputEvent::black(4)});
         CHECK(f->sink.sent.empty(), "file pleine : aucune commande");
     }
 
-    // ----- Dessin du clavier -----
+    // ----- Écran : la timeline du pattern, pas de piano dessiné -----
     {
         auto f = make();
         f->enter_from_pattern();
         Canvas c;
         f->ui.render(c);
 
-        // En-tête : nom de la piste et BPM, comme dans les autres vues, sans lettre de mode.
+        // En-tête : nom de la piste, « KEY » à gauche du BPM, BPM, icône de lecture.
         Canvas ref;
         ref.text(0, 0, "a");
         const int bpm_x = Canvas::W - 6 - 4 - Canvas::text_width("120");
+        ref.text(bpm_x - 6 - Canvas::CHAR_W * 3, 0, "KEY");
         ref.text(bpm_x, 0, "120");
         ref.rect(Canvas::W - 6, 0, 2, 7, true);
         ref.rect(Canvas::W - 3, 0, 2, 7, true);
-        CHECK(same_rows(c, ref, 0, 8), "en-tête : nom de la piste, BPM, icône de lecture");
-        CHECK(region_empty(c, 0, 8, 128, TOP), "rien entre l'en-tête et le clavier");
+        CHECK(same_rows(c, ref, 0, 8), "en-tête : nom de la piste, KEY, BPM, icône de lecture");
 
-        // 14 blanches dessinées (contour), les deux dernières cases vides.
-        bool whites = true;
-        for (int i = 0; i < keyboard::WHITE_KEYS; ++i) {
-            whites = whites && lit(c, i * 8, TOP + 30) && lit(c, i * 8 + 6, TOP + 30) && lit(c, i * 8 + 3, TOP + 35) && !lit(c, i * 8 + 3, TOP + 25);
-        }
-        CHECK(whites, "14 blanches : contour dessiné, intérieur vide");
-        CHECK(region_empty(c, 14 * 8, TOP, 128, 64), "les blanches 15 et 16 ne sont pas dessinées");
+        // Timeline : les boîtes du pattern comme en mode Edit (0x0011 : pas 0 et 4 pleins), repères de temps.
+        auto box = [&](int step) {
+            int n = 0;
+            for (int y = 24; y < 31; ++y)
+                for (int x = step * 8; x < step * 8 + 7; ++x) n += c.get_pixel(x, y);
+            return n;
+        };
+        CHECK(box(0) == 49 && box(4) == 49 && box(1) == 24 && box(15) == 24, "boîtes pleines pour les pas joués, contour pour les autres");
+        CHECK(c.get_pixel(3, 18) && c.get_pixel(4 * 8 + 3, 18) && !c.get_pixel(8 + 3, 18), "repères de temps tous les 4 pas");
+        // Pas de piano : rien entre l'en-tête et les repères, rien sous la timeline, pas de pas sélectionné ni de jauge.
+        CHECK(region_empty(c, 0, 8, 128, 18), "pas de touches dessinées");
+        CHECK(region_empty(c, 0, 36, 128, 64), "rien sous la timeline : ni jauge ni texte");
+        CHECK(!c.get_pixel(3, 22), "pas de repère de sélection");
 
-        // 10 noires : pleines, entre deux blanches ; rien dans les intervalles Mi-Fa et Si-Do.
-        bool blacks = true;
-        for (int j = 0; j < keyboard::BLACK_KEYS; ++j) {
-            const int x = black_x(j);
-            blacks = blacks && lit(c, x, TOP) && lit(c, x + 4, TOP + 19) && lit(c, x + 2, TOP + 10) && !lit(c, x + 2, TOP + 20) && !lit(c, x + 2, TOP + 25);
-        }
-        CHECK(blacks, "10 noires : pleines, de 5 pixels de large sur 20 de haut, décalées entre deux blanches");
-        for (int gap : {2, 6, 9, 13}) CHECK(!lit(c, gap * 8 + 7, TOP + 10), "pas de noire entre Mi-Fa et Si-Do");
+        // Jouer ne change pas l'écran (pas de touche inversée).
+        Canvas before = c;
+        f->feed({InputEvent::step(3), InputEvent::black(2), InputEvent::step(7)});
+        f->ui.render(c);
+        bool same = true;
+        for (int y = 0; y < 64; ++y)
+            for (int x = 0; x < Canvas::W; ++x) same = same && c.get_pixel(x, y) == before.get_pixel(x, y);
+        CHECK(same, "jouer des notes ne change pas l'écran");
 
-        // Le Do central est marqué d'un point ; aucune autre blanche.
-        CHECK(lit(c, 7 * 8 + 3, TOP + 31) && !lit(c, 6 * 8 + 3, TOP + 31) && !lit(c, 8 * 8 + 3, TOP + 31), "le Do central (8e blanche) est marqué d'un point");
+        // Le pas en cours de lecture est marqué sous sa boîte, comme dans la vue Pattern.
+        f->state.playing.store(true);
+        f->state.step.store(5);
+        f->tick(10);
+        f->ui.render(c);
+        CHECK(c.get_pixel(5 * 8 + 3, 24 + 10) && !c.get_pixel(4 * 8 + 3, 24 + 10), "pas en cours de lecture : repère sous la boîte");
 
-        // La rangée du bas est libre (réservée à l'enregistrement).
-        CHECK(region_empty(c, 0, TOP + 36, 128, 64), "rien sous le clavier");
-    }
-
-    // ----- Touche jouée : inversée un instant -----
-    {
-        auto f = make();
-        f->enter_from_pattern();
-        Canvas c;
-
-        f->ui.render(c);
-        CHECK(!lit(c, 3, TOP + 20), "avant : l'intérieur de la blanche 1 est vide");
-        f->feed({InputEvent::step(0)});
-        f->ui.render(c);
-        CHECK(lit(c, 3, TOP + 20) && lit(c, 3, TOP + 34) && !lit(c, 8 + 3, TOP + 20), "blanche jouée : pleine, les autres non");
-        f->tick(UiController::LIT_MS - 1);
-        f->ui.render(c);
-        CHECK(lit(c, 3, TOP + 20), "encore pleine juste avant la fin");
-        f->tick(2);
-        f->ui.render(c);
-        CHECK(!lit(c, 3, TOP + 20), "redevenue vide après 120 ms");
-
-        // Noire jouée : creuse.
-        const int x = black_x(2);
-        f->ui.render(c);
-        CHECK(lit(c, x + 2, TOP + 10), "noire 3 pleine au repos");
-        f->feed({InputEvent::black(2)});
-        f->ui.render(c);
-        CHECK(!lit(c, x + 2, TOP + 10) && lit(c, x, TOP + 10) && lit(c, x + 4, TOP + 10) && lit(c, x + 2, TOP), "noire jouée : creuse (contour conservé)");
-        f->tick(UiController::LIT_MS + 1);
-        f->ui.render(c);
-        CHECK(lit(c, x + 2, TOP + 10), "noire de nouveau pleine");
-
-        // Le Do central : le point s'inverse avec la touche.
-        f->feed({InputEvent::step(7)});
-        f->ui.render(c);
-        CHECK(lit(c, 7 * 8 + 1, TOP + 20) && !lit(c, 7 * 8 + 3, TOP + 31), "Do central joué : touche pleine, point en négatif");
-
-        // Une seule touche est inversée à la fois (la dernière jouée).
-        f->feed({InputEvent::step(2)});
-        f->ui.render(c);
-        CHECK(lit(c, 2 * 8 + 3, TOP + 20) && !lit(c, 7 * 8 + 1, TOP + 20), "seule la dernière touche jouée est inversée");
+        // Les réglages de piste et les modes d'édition ne s'affichent pas ici, même après un passage en Velocity.
+        auto g = make();
+        g->feed({InputEvent::ok(), InputEvent::mode(), InputEvent::step(0), InputEvent::wheel(-10), InputEvent::black(9)});
+        g->ui.render(c);
+        int box0 = 0;
+        for (int y = 24; y < 31; ++y)
+            for (int x = 0; x < 7; ++x) box0 += c.get_pixel(x, y);
+        CHECK(g->ui.step_velocity(0, 0) < 127 && box0 == 49 && region_empty(c, 0, 36, 128, 64) && !c.get_pixel(3, 22),
+              "mode Velocity et pas sélectionné d'avant : la timeline reste celle du mode Edit, sans sélection ni jauge");
     }
 
     // ----- Avec le vrai moteur : les touches font sonner la piste au bon pitch -----
@@ -360,7 +331,7 @@ int main() {
             e.push(n);
             return render(e);
         };
-        // Entrée : la note jouée par la première noire est celle d'une Note de pitch -11.
+        // Entrée : la note jouée par la 10e noire est celle d'une Note de pitch +10.
         {
             Engine       e;
             UiController ui(e);
@@ -368,8 +339,8 @@ int main() {
             ui.add_track("a.wav", 2);
             ui.update(e.state(), 0);
             ui.handle(InputEvent::ok());
-            ui.handle(InputEvent::black(0));
-            CHECK(render(e) == direct(-11), "la première noire sonne à -11 demi-tons, comme une Note directe");
+            ui.handle(InputEvent::black(9));
+            CHECK(render(e) == direct(10), "la 10e noire sonne à +10 demi-tons, comme une Note directe");
         }
         // Do central (blanche 8, pitch 0) : vitesse normale ; blanche 14 (+11) ; noire 6 (+1).
         auto key = [&](const InputEvent& ev) {
@@ -379,7 +350,7 @@ int main() {
             ui.add_track("a.wav", 2);
             ui.update(e.state(), 0);
             ui.handle(InputEvent::ok());
-            ui.handle(InputEvent::black(0));
+            ui.handle(InputEvent::black(9));
             std::vector<float> sink(64), unused(64);
             e.render(sink.data(), unused.data(), 64);  // la note d'entrée se termine
             ui.handle(ev);

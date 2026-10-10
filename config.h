@@ -25,4 +25,12 @@ constexpr int   OFFSET_UNITS     = 128;
 constexpr int   MAX_EXTRA_HITS   = 3;
 constexpr int   QUANTIZE_MAX     = 100;
 
+// Panoramique d'une note : -50 (tout à gauche) à +50 (tout à droite), 0 = centre.
+constexpr int   PAN_MIN          = -50;
+constexpr int   PAN_MAX          = 50;
+
+// Largeur stéréo d'une piste : -100 (mono complet) à +100 (côtés doublés), 0 = sample inchangé.
+constexpr int   WIDTH_MIN        = -100;
+constexpr int   WIDTH_MAX        = 100;
+
 }  // namespace cfg

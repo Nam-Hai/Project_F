@@ -67,7 +67,7 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 | :--- | :--- | :--- | :--- |
 | Microcontrôleur | Teensy 4.1 (avec headers) | 1 | Processeur principal & moteur DSP |
 | DAC I2S | Module Breakout PCM5102A | 1 | Conversion Numérique -> Analogique |
-| Puce Mémoire (Opt) | PSRAM QSPI $8\text{ Mo}$ (SOIC-8) | 1 ou 2 | Extension mémoire vive pour samples WAV |
+| Puce Mémoire **(retenue)** | PSRAM QSPI $8\text{ Mo}$ (SOIC-8), soudée sous la Teensy (ou Teensy 4.1 vendue avec la PSRAM déjà montée) | 1 (8 Mo), 2 si besoin (16 Mo) | Mémoire vive pour les samples WAV, notamment **stéréo** (deux fois plus lourds que le mono) : la RAM2 (512 Ko) ne suffit pas pour des 808 longs. Pas de conflit avec la carte microSD (lecteur de l'autre côté de la carte, autre bus). |
 | Potentiomètre | $10\text{ k}\Omega$ Logarithmique | 1 | Contrôle du volume général |
 | Condensateurs | $10\ \mu\text{F}$ Electrolytique / $2,2\text{ nF}$ Céramique | 2 de chaque | Découplage DC et filtrage passe-bas |
 | Résistances | $1\text{ k}\Omega$, $10\text{ k}\Omega$, $100\text{ k}\Omega$ | 4 à 8 | Atténuation et polarisation AOP |
@@ -76,7 +76,7 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 | Écran | OLED monochrome 128x64 (SSD1306, I2C ou SPI) | 1 | Affichage de l'interface |
 | Encodeur rotatif | Encodeur incrémental (« roue », avec ou sans poussoir) | 1 | Navigation dans les listes, réglage des valeurs |
 | Boutons de pas / touches blanches | Boutons-poussoirs alignés | 16 | 16 pas du pattern ; touches blanches du clavier de piano |
-| Boutons de touches noires | Boutons-poussoirs, placés au-dessus des blancs et décalés | 10 | Touches noires du clavier de piano (la première ouvre le clavier) |
+| Boutons de touches noires | Boutons-poussoirs, placés au-dessus des blancs et décalés | 10 | Touches noires du clavier de piano (la **10e** passe en mode Clavier / Rec) ; dans la vue Pattern, les touches 2 à 4, **tenues**, règlent Quantifier, Wide (largeur stéréo) et Balance de la piste (le firmware doit lire l'appui et le relâchement) |
 | Boutons de commande | Boutons-poussoirs | 5 | Valider, Back, Menu, Mode, Play/Stop |
 | Potentiomètre BPM | $10\text{ k}\Omega$ linéaire | 1 | Tempo |
 
@@ -95,4 +95,4 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 * **Total : 31 boutons-poussoirs**, une roue, un potard, un écran OLED. Les boutons de pas n'ont **pas de LED** dans la première version (le retour passe par l'écran).
 * **Disposition du clavier** : les 10 boutons noirs sont au-dessus des 16 boutons de pas, décalés entre deux blanches comme sur un piano (voir `plan_keyboard.md`).
 * **Câblage** : 31 boutons, c'est assez pour envisager soit un câblage direct, soit une **matrice de boutons** ; le choix, avec le décompte des broches libres de la Teensy 4.1 (I2S, écran, encodeur, potard, SD déjà pris), est à faire lors de la conception.
-* **Étiquette** : une inscription près de la première touche noire (« Clavier ») est utile, puisque ce raccourci n'a pas de ligne de menu.
+* **Étiquettes** : des inscriptions près des touches noires de réglage (« Quant », « Wide », « Bal » : touches 2 à 4) et de la 10e (« Rec ») sont utiles, puisque ces raccourcis n'ont pas de ligne de menu.

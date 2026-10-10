@@ -100,6 +100,13 @@ int main() {
     // ----- Pré-compte : clics seuls, puis la prise -----
     {
         Rig r;
+        // Une autre piste (3) joue ses pas 0 et 5 ; la piste enregistrée (2) en avait aussi, effacés par StartRecord.
+        Command c3 = cmd(Command::SetTrackSample, 3);
+        c3.data    = impulse;
+        c3.length  = 2;
+        r.e.push(c3);
+        r.e.push(cmd(Command::SetStep, 3, 0, 1.0f));
+        r.e.push(cmd(Command::SetStep, 3, 5, 1.0f));
         r.e.push(cmd(Command::SetStep, 2, 0, 1.0f));
         r.e.push(cmd(Command::SetStep, 2, 5, 1.0f));
         r.e.push(cmd(Command::StartRecord, 2));
@@ -130,7 +137,8 @@ int main() {
         CHECK(crossings(0) > crossings(22050) + 5, "le premier temps est plus aigu");
         // Le pattern ne joue qu'à partir de la prise (pas 0 du tour suivant).
         r.to(BAR + 6000);
-        CHECK(!r.hits(BAR - 5, BAR + 5, 0.01f).empty(), "pas 0 du pattern : joué au début de la prise");
+        CHECK(!r.hits(BAR - 5, BAR + 5, 0.01f).empty() && r.e.state().triggers[3].load() >= 1, "pas 0 de l'autre piste : joué au début de la prise");
+        CHECK(r.e.state().triggers[2].load() == 0, "pas de la piste enregistrée : effacés au lancement, rien ne joue");
     }
 
     // ----- Datation d'une frappe -----
@@ -261,19 +269,12 @@ int main() {
     // ----- Règle de prise -----
     {
         Rig r;
-        // Pas 3 déjà joué avec un roulement et un décalage tardif.
-        r.e.push(cmd(Command::SetStep, 2, 3, 1.0f));
-        r.e.push(cmd(Command::SetStepOffset, 2, 3, 60.0f));
-        Command x = cmd(Command::SetExtraHit, 2, 3, 80.0f);
-        x.slot    = 1;
-        x.offset  = 10;
-        r.e.push(x);
         r.e.push(cmd(Command::StartRecord, 2));
         const int base = BAR + 3 * 5513;
-        r.hit_at(base + 200, 100, 1);  // pas 3, premier du tour : remplace tout
+        r.hit_at(base + 200, 100, 1);  // pas 3, premier du tour : sa note principale
         r.to(base + 201);
         auto ev = r.events();
-        CHECK(ev.size() == 1 && ev[0].extra_count == 0 && ev[0].main.velocity == 100 && ev[0].main.pitch == 1, "première frappe : remplace les notes du pas");
+        CHECK(ev.size() == 1 && ev[0].extra_count == 0 && ev[0].main.velocity == 100 && ev[0].main.pitch == 1, "première frappe : note principale du pas");
         r.hit_at(base + 600, 90);
         r.hit_at(base + 900, 80);
         r.hit_at(base + 1200, 70);
@@ -289,23 +290,46 @@ int main() {
         CHECK(ev.size() == 1 && ev[0].extra_count == 3 && ev[0].extra[2].velocity == 60 && ev[0].extra[1].velocity == 80 && ev[0].main.velocity == 100,
               "cinquième frappe : remplace la plus proche en temps");
 
-        // Les anciennes notes du pas (tardives, encore en attente) ne sonnent pas : seules les 5 frappes ont sonné.
-        r.to(base + 20000);
-        CHECK(r.hits(BAR, BAR + 3 * 5513 + 8000).size() == 5, "l'ancienne note en attente a été retirée");
-
         // Tour suivant : la première frappe remplace de nouveau tout le pas.
         r.hit_at(base + BAR + 300, 50);
         r.to(base + BAR + 301);
         ev = r.events();
         CHECK(ev.size() == 1 && ev[0].extra_count == 0 && ev[0].main.velocity == 50, "nouveau tour : la première frappe remplace les quatre notes");
 
-        // Un pas non touché ne change pas : pas 9 du pattern.
+        // Un pas non touché de la prise reste tel quel d'un tour à l'autre : un pas enregistré au tour 1 rejoue au tour 2.
         Rig q;
-        q.e.push(cmd(Command::SetStep, 2, 9, 1.0f));
         q.e.push(cmd(Command::StartRecord, 2));
-        q.hit_at(BAR + 3 * 5513);
+        q.hit_at(BAR + 9 * 5513);
         q.to(2 * BAR + 60000);
-        CHECK(!q.hits(2 * BAR + 9 * 5512, 2 * BAR + 9 * 5514).empty(), "pas non touché : inchangé");
+        CHECK(!q.hits(2 * BAR + 9 * 5512, 2 * BAR + 9 * 5514).empty() && q.hits(2 * BAR + 3 * 5512, 2 * BAR + 3 * 5514).empty(),
+              "pas touché au tour 1 : rejoué au tour 2 ; pas jamais touché : vide");
+    }
+    {
+        // La première frappe d'un pas, au tour suivant, retire l'ancienne note de ce pas encore en attente (décalée
+        // plus tard dans le pas) : sinon elle sonnerait après la nouvelle.
+        Rig r;
+        r.e.push(cmd(Command::StartRecord, 2));
+        r.hit_at(BAR + 3 * 5513 + 2600);                 // tour 1 : pas 3, décalage d'environ +60
+        r.hit_at(2 * BAR + 3 * 5513 + 600);              // tour 2 : pas 3, décalage d'environ +14 (la note de +60 est en attente)
+        r.to(2 * BAR + 3 * 5513 + 9000);
+        CHECK(r.hits(2 * BAR + 3 * 5512, 2 * BAR + 3 * 5512 + 8000).size() == 1, "ancienne note du pas retirée : seule la nouvelle frappe sonne");
+    }
+    {
+        // StartRecord efface les pas de la piste enregistrée, mais garde sa quantification et ne touche pas aux autres pistes.
+        Rig r;
+        Command c3 = cmd(Command::SetTrackSample, 3);
+        c3.data    = impulse;
+        c3.length  = 2;
+        r.e.push(c3);
+        r.e.push(cmd(Command::SetStep, 2, 9, 1.0f));
+        r.e.push(cmd(Command::SetStep, 3, 9, 1.0f));
+        r.e.push(cmd(Command::SetTrackQuantize, 2, 0, 50.0f));
+        r.e.push(cmd(Command::StartRecord, 2));
+        r.hit_at(BAR + 17916);  // pas 3, décalage +32 : à 50 % de quantification, rejoué à +16
+        r.to(3 * BAR);
+        CHECK(r.hits(2 * BAR + 9 * 5512, 2 * BAR + 9 * 5514).size() == 1 && r.e.state().triggers[3].load() >= 1,
+              "la piste 3 garde son pas 9 (le pas 9 de la piste 2 est effacé : un seul coup, celui de la piste 3)");
+        CHECK(eq(r.hits(2 * BAR + 3 * 5500, 2 * BAR + 3 * 5520 + 4000), {2 * BAR + idx(3, 16)}), "la quantification de la piste est conservée : rejoué à +16 (50 %)");
     }
     {
         // Le plus proche en temps : 4 notes à environ -23, 0, +23 et +46 ; une cinquième à +48 remplace la dernière.

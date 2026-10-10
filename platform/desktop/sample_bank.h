@@ -11,8 +11,12 @@
 // Cycle de vie : load() -> Command::SetTrackSample -> ... -> Engine::pop_released() -> release().
 class SampleBank {
 public:
-    // Charge un WAV (mono, 16 bits, 44,1 kHz). Hors callback audio uniquement.
+    // Charge un WAV (mono ou stéréo, 16 bits ou flottant, 44,1 kHz). `length` est un nombre d'images ; un sample
+    // stéréo est entrelacé (G, D, G, D...). Hors callback audio uniquement.
     bool load(const char* path, const int16_t*& data, uint32_t& length, std::string& error);
+
+    // Nombre de canaux d'un buffer de la banque (1 pour un pointeur inconnu).
+    int channels(const int16_t* data) const;
 
     // Libère un buffer rendu par le moteur. Ignore un pointeur inconnu.
     void release(const int16_t* data);
@@ -20,5 +24,9 @@ public:
     std::size_t count() const { return buffers_.size(); }
 
 private:
-    std::vector<std::unique_ptr<std::vector<int16_t>>> buffers_;
+    struct Buffer {
+        std::vector<int16_t> samples;
+        int                  channels = 1;
+    };
+    std::vector<std::unique_ptr<Buffer>> buffers_;
 };

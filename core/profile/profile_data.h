@@ -12,7 +12,7 @@
 // du profil : l'audio n'est jamais sauvegardé, il reste dans samples/ (PC) ou sur la carte SD.
 namespace profile {
 
-constexpr int MAX_LOOPS         = 32;
+constexpr int MAX_LOOPS         = 12;
 constexpr int MAX_SAMPLES       = 64;
 constexpr int SAMPLE_NAME_LEN   = 47;  // caractères d'un nom de fichier (sans le zéro final)
 constexpr int PROFILE_NAME_LEN  = 23;
@@ -26,9 +26,10 @@ struct TrackData {
     float    pitch   = 1.0f;   // pitch de la piste (rapport de vitesse)
     uint16_t pattern = 0;      // bit i = pas i (même convention que l'UI)
 
-    // Valeurs de chaque pas (conservées même si le pas est éteint) : vélocité 1..127, pitch -12..12.
+    // Valeurs de chaque pas (conservées même si le pas est éteint) : vélocité 1..127, pitch -12..12, pan -50..50.
     uint8_t step_velocity[16] = {127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
     int8_t  step_pitch[16]    = {};
+    int8_t  step_pan[16]      = {};
 
     // Micro-timing : décalage de la note principale de chaque pas (1/128 de pas, -64..63), notes supplémentaires
     // des pas (roulements : jusqu'à 3 par pas, rangées dans l'ordre du temps) et force de quantification de la
@@ -37,6 +38,11 @@ struct TrackData {
     uint8_t extra_count[16]   = {};
     Hit     extra[16][cfg::MAX_EXTRA_HITS];
     uint8_t quantize          = 0;
+
+    // Stéréo : largeur de la piste (-100 = mono .. +100 = côtés doublés, 0 = inchangé ; agit sur le sample) et
+    // balance de base de la piste (-50..50, combinée avec celle de chaque note au déclenchement).
+    int8_t  width             = 0;
+    int8_t  balance           = 0;
 };
 
 struct LoopData {

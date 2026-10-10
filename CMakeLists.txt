@@ -156,3 +156,19 @@ add_test(NAME record COMMAND test_record)
 add_executable(test_record_ui tests/test_record_ui.cpp)
 target_link_libraries(test_record_ui PRIVATE core)
 add_test(NAME record_ui COMMAND test_record_ui)
+
+add_executable(test_wav tests/test_wav.cpp)
+target_link_libraries(test_wav PRIVATE desktop_io)
+add_test(NAME wav COMMAND test_wav)
+
+add_executable(test_stereo tests/test_stereo.cpp)
+target_link_libraries(test_stereo PRIVATE desktop_io)
+add_test(NAME stereo COMMAND test_stereo)
+
+add_executable(test_balance_ui tests/test_balance_ui.cpp)
+target_link_libraries(test_balance_ui PRIVATE core)
+add_test(NAME balance_ui COMMAND test_balance_ui)
+
+add_executable(test_track_settings tests/test_track_settings.cpp)
+target_link_libraries(test_track_settings PRIVATE core)
+add_test(NAME track_settings COMMAND test_track_settings)

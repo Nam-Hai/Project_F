@@ -42,7 +42,7 @@ profile::LoadResult FileProfileStore::load(profile::ProfileData& out) {
 bool FileProfileStore::save(const profile::ProfileData& profile) {
     error_.clear();
 
-    std::vector<char> text(640 * 1024);  // le pire cas (32 loops de 16 pistes, tout rempli) approche 500 Ko
+    std::vector<char> text(256 * 1024);  // le pire cas (12 loops de 16 pistes, tout rempli) atteint 215 Ko avec les pans
     const int         len = profile::ProfileCodec::write(profile, text.data(), text.size());
     if (len < 0) return fail("profil invalide ou trop grand");
 

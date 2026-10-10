@@ -37,7 +37,8 @@ void DesktopSampleLibrary::refresh() {
         // On vérifie le format tout de suite : seuls les fichiers utilisables sont proposés.
         std::vector<int16_t> probe;
         std::string          error;
-        if (!load_wav_mono16(entry.path().string().c_str(), probe, error) || probe.empty()) {
+        int                  channels = 1;
+        if (!load_wav(entry.path().string().c_str(), probe, channels, error) || probe.empty()) {
             std::fprintf(stderr, "Sample ignoré : %s (%s)\n", name.c_str(), error.c_str());
             continue;
         }

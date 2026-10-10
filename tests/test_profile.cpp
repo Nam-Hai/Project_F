@@ -219,7 +219,7 @@ int main() {
         many += "]";
         CHECK(parse("{\"format\":\"dmp\",\"version\":1,\"big\":" + many + "}") == ProfileStatus::TooBig, "trop de jetons");
 
-        // Profil plein : 32 loops de 16 pistes passent par le tableau de jetons.
+        // Profil plein : MAX_LOOPS (12) loops de 16 pistes passent par le tableau de jetons.
         source = ProfileData{};
         source.add_sample("Kick1.wav");
         source.loop_count = MAX_LOOPS;
@@ -229,8 +229,8 @@ int main() {
         }
         const int len = ProfileCodec::write(source, buffer, sizeof buffer);
         CHECK(len > 0 && codec.parse(buffer, static_cast<std::size_t>(len), parsed) == ProfileStatus::Ok &&
-                  parsed.loop_count == MAX_LOOPS && parsed.loops[31].tracks[15].pattern == static_cast<uint16_t>(31 * 100 + 15),
-              "profil plein (32 loops x 16 pistes) : aller-retour");
+                  parsed.loop_count == MAX_LOOPS && parsed.loops[MAX_LOOPS - 1].tracks[15].pattern == static_cast<uint16_t>((MAX_LOOPS - 1) * 100 + 15),
+              "profil plein (12 loops x 16 pistes) : aller-retour");
         std::printf("profil plein : %d octets de JSON\n", len);
     }
 
@@ -398,7 +398,8 @@ int main() {
         CHECK(count(buffer, "\"step_offset\"") == 1 && count(buffer, "\"extra_hits\"") == 1 && count(buffer, "\"quantize\"") == 1,
               "les clés ne sont écrites que pour les pistes qui s'écartent des valeurs par défaut");
         CHECK(std::strstr(buffer, "\"step_offset\": \"-64,0,0,0,32,0,0,0,0,0,0,0,0,0,0,63\"") != nullptr, "liste des décalages lisible, 16 valeurs");
-        CHECK(std::strstr(buffer, "\"extra_hits\": \"4:-16:100:0 4:16:80:5 4:48:60:-12 9:-1:127:0\"") != nullptr, "notes supplémentaires : pas:décalage:vélocité:pitch");
+        CHECK(std::strstr(buffer, "\"extra_hits\": \"4:-16:100:0:0 4:16:80:5:0 4:48:60:-12:0 9:-1:127:0:0\"") != nullptr,
+              "notes supplémentaires : pas:décalage:vélocité:pitch:pan");
         CHECK(std::strstr(buffer, "\"quantize\": 30") != nullptr, "force de quantification en nombre");
 
         CHECK(codec.parse(buffer, static_cast<std::size_t>(len), parsed) == ProfileStatus::Ok, "relecture");
@@ -433,7 +434,7 @@ int main() {
         CHECK(all_refused, "décalages invalides : BadField");
 
         const char* bad_extra[] = {
-            "4:-16:100",          "4:-16:100:0:1",    "a:b:c:d",         "16:0:100:0",      "-1:0:100:0",     "4:-65:100:0",
+            "4:-16:100",          "4:-16:100:0:",     "4:0:100:0:51",    "4:0:100:0:-51",  "4:0:100:0:1:2",  "4:0:100:0:x",  "4:0:100:0:1x",    "a:b:c:d",         "16:0:100:0",      "-1:0:100:0",     "4:-65:100:0",
             "4:64:100:0",         "4:0:0:0",          "4:0:128:0",       "4:0:100:13",      "4:0:100:-13",    "4:0:100:0x",
             "4::100:0",           "4:0:100:0;5:0:100:0", "4:0:100:0,5:0:100:0",
             "4:0:100:0 4:1:100:0 4:2:100:0 4:3:100:0",  // 4 notes dans le même pas : trop
@@ -480,9 +481,142 @@ int main() {
         CHECK(ProfileCodec::write(source, buffer, sizeof buffer) > 0, "(valeurs remises dans les bornes : l'écriture repasse)");
     }
 
-    // ----- Profil plein, tout rempli : 9 clés par piste, 3 notes supplémentaires dans chaque pas -----
+    // ----- Pan : « step_pan » et le cinquième champ des notes supplémentaires -----
     {
-        static char big[700 * 1024];
+        auto count = [](const char* text, const char* what) {
+            int n = 0;
+            for (const char* p = text; (p = std::strstr(p, what)) != nullptr; ++p) ++n;
+            return n;
+        };
+        source = ProfileData{};
+        source.add_sample("a.wav");
+        source.loop_count           = 1;
+        source.loops[0].track_count = 3;
+        TrackData& t1 = source.loops[0].tracks[1];
+        t1.step_pan[0]  = -50;
+        t1.step_pan[3]  = 25;
+        t1.step_pan[15] = 50;
+        TrackData& t2 = source.loops[0].tracks[2];
+        t2.extra_count[4] = 2;
+        t2.extra[4][0]    = {-16, 100, 0, -30};
+        t2.extra[4][1]    = {16, 80, 5, 50};
+
+        const int len = ProfileCodec::write(source, buffer, sizeof buffer);
+        CHECK(len > 0, "écriture avec pan");
+        CHECK(count(buffer, "\"step_pan\"") == 1, "« step_pan » seulement pour la piste qui s'écarte du centre");
+        CHECK(std::strstr(buffer, "\"step_pan\": \"-50,0,0,25,0,0,0,0,0,0,0,0,0,0,0,50\"") != nullptr, "liste des pans lisible, 16 valeurs");
+        CHECK(std::strstr(buffer, "\"extra_hits\": \"4:-16:100:0:-30 4:16:80:5:50\"") != nullptr, "pan des notes supplémentaires : cinquième champ");
+        CHECK(codec.parse(buffer, static_cast<std::size_t>(len), parsed) == ProfileStatus::Ok, "relecture");
+        const TrackData& r0 = parsed.loops[0].tracks[0];
+        const TrackData& r1 = parsed.loops[0].tracks[1];
+        const TrackData& r2 = parsed.loops[0].tracks[2];
+        bool centered = true;
+        for (int s = 0; s < cfg::MAX_STEPS; ++s) centered = centered && r0.step_pan[s] == 0 && r2.step_pan[s] == 0;
+        CHECK(centered, "pistes sans pan : centre");
+        CHECK(r1.step_pan[0] == -50 && r1.step_pan[3] == 25 && r1.step_pan[15] == 50 && r1.step_pan[1] == 0, "pans des pas restitués");
+        CHECK(r2.extra_count[4] == 2 && r2.extra[4][0].pan == -30 && r2.extra[4][1].pan == 50 && r2.extra[4][0].offset == -16 && r2.extra[4][1].pitch == 5,
+              "pans des notes supplémentaires restitués, autres champs intacts");
+        static char again[96 * 1024];
+        CHECK(ProfileCodec::write(parsed, again, sizeof again) == len && std::strcmp(again, buffer) == 0, "écriture stable");
+
+        // Anciens fichiers : notes supplémentaires à quatre champs, pan 0 ; pas de « step_pan ».
+        CHECK(parse(doc("", "", "\"extra_hits\": \"3:-4:50:2 3:4:60:-2\",")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].extra_count[3] == 2 &&
+                  parsed.loops[0].tracks[0].extra[3][0].pan == 0 && parsed.loops[0].tracks[0].extra[3][1].pan == 0 && parsed.loops[0].tracks[0].extra[3][1].velocity == 60,
+              "ancien fichier (quatre champs) : pan 0");
+        CHECK(parse(doc("", "", "\"extra_hits\": \"3:-4:50:2 3:4:60:-2:+7\",")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].extra[3][0].pan == 0 &&
+                  parsed.loops[0].tracks[0].extra[3][1].pan == 7,
+              "quatre et cinq champs mélangés, signe +");
+        CHECK(parse(doc()) == ProfileStatus::Ok && parsed.loops[0].tracks[0].step_pan[5] == 0, "ancien fichier sans step_pan : centre");
+        CHECK(parse(doc("", "", "\"step_pan\": \" -5, 6 ,+7\",")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].step_pan[0] == -5 &&
+                  parsed.loops[0].tracks[0].step_pan[2] == 7 && parsed.loops[0].tracks[0].step_pan[3] == 0,
+              "step_pan manuscrit : espaces, signe +, liste courte");
+        CHECK(parse(doc("", "", "\"step_pan\": \"\",")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].step_pan[0] == 0, "step_pan vide : centre");
+
+        // Valeurs invalides.
+        const char* bad_pan[] = {"-51", "51", "1,2,,3", "a", "1.5", "1 2", "99999999999", "0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"};
+        bool refused = true;
+        for (const char* v : bad_pan) refused = refused && parse(doc("", "", std::string("\"step_pan\": \"") + v + "\",")) == ProfileStatus::BadField;
+        CHECK(refused, "step_pan invalide : BadField");
+        CHECK(parse(doc("", "", "\"step_pan\": [1,2],")) == ProfileStatus::BadField && parse(doc("", "", "\"step_pan\": 5,")) == ProfileStatus::BadField &&
+                  parse(doc("", "", "\"step_pan\": null,")) == ProfileStatus::BadField,
+              "step_pan : mauvais type JSON refusé");
+        CHECK(parse(doc("", "", "\"step_pan\": \"-50,50\",")) == ProfileStatus::Ok, "bornes -50 et +50 acceptées");
+
+        // Écriture de valeurs hors bornes refusée.
+        source.loops[0].tracks[1].step_pan[2] = 51;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : pan 51 refusé");
+        source.loops[0].tracks[1].step_pan[2] = -51;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : pan -51 refusé");
+        source.loops[0].tracks[1].step_pan[2] = 0;
+        source.loops[0].tracks[2].extra[4][1].pan = 51;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : pan 51 d'une note supplémentaire refusé");
+        source.loops[0].tracks[2].extra[4][1].pan = -51;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : pan -51 d'une note supplémentaire refusé");
+        source.loops[0].tracks[2].extra[4][1].pan = 0;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) > 0, "(valeurs remises dans les bornes : l'écriture repasse)");
+    }
+
+    // ----- Largeur et balance de la piste : clés « width » et « balance » -----
+    {
+        auto count = [](const char* text, const char* what) {
+            int n = 0;
+            for (const char* p = text; (p = std::strstr(p, what)) != nullptr; ++p) ++n;
+            return n;
+        };
+        source = ProfileData{};
+        source.add_sample("a.wav");
+        source.loop_count           = 1;
+        source.loops[0].track_count = 4;
+        source.loops[0].tracks[1].width   = -100;
+        source.loops[0].tracks[2].balance = 50;
+        source.loops[0].tracks[3].width   = 7;
+        source.loops[0].tracks[3].balance = -33;
+
+        const int len = ProfileCodec::write(source, buffer, sizeof buffer);
+        CHECK(len > 0, "écriture avec largeur et balance de piste");
+        CHECK(count(buffer, "\"width\":") == 2 && count(buffer, "\"balance\":") == 2, "clés écrites seulement pour les pistes qui s'écartent du centre");
+        CHECK(std::strstr(buffer, "\"width\": -100") != nullptr && std::strstr(buffer, "\"balance\": 50") != nullptr, "valeurs en nombres");
+        CHECK(codec.parse(buffer, static_cast<std::size_t>(len), parsed) == ProfileStatus::Ok, "relecture");
+        const LoopData& lp = parsed.loops[0];
+        CHECK(lp.tracks[0].width == 0 && lp.tracks[0].balance == 0 && lp.tracks[1].width == -100 && lp.tracks[1].balance == 0 && lp.tracks[2].width == 0 &&
+                  lp.tracks[2].balance == 50 && lp.tracks[3].width == 7 && lp.tracks[3].balance == -33,
+              "largeur et balance de chaque piste restituées, sans se mélanger");
+        static char again[96 * 1024];
+        CHECK(ProfileCodec::write(parsed, again, sizeof again) == len && std::strcmp(again, buffer) == 0, "écriture stable");
+
+        // Anciens fichiers : sans les clés, 0.
+        CHECK(parse(doc()) == ProfileStatus::Ok && parsed.loops[0].tracks[0].width == 0 && parsed.loops[0].tracks[0].balance == 0, "ancien fichier : inchangé, centre");
+        CHECK(parse(doc("", "", "\"width\": 0, \"balance\": 0,")) == ProfileStatus::Ok, "zéro explicite accepté");
+        CHECK(parse(doc("", "", "\"width\": -100, \"balance\": 50,")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].width == -100 &&
+                  parsed.loops[0].tracks[0].balance == 50,
+              "bornes acceptées");
+
+        // Valeurs invalides (la largeur va de -100 à 100, la balance de -50 à 50).
+        const char* bad_common[] = {"1.5", "\"5\"", "null", "true", "[1]", "{}", "1e3"};
+        for (const char* v : bad_common) {
+            CHECK(parse(doc("", "", std::string("\"width\": ") + v + ",")) == ProfileStatus::BadField, "largeur invalide : BadField");
+            CHECK(parse(doc("", "", std::string("\"balance\": ") + v + ",")) == ProfileStatus::BadField, "balance invalide : BadField");
+        }
+        CHECK(parse(doc("", "", "\"width\": 101,")) == ProfileStatus::BadField && parse(doc("", "", "\"width\": -101,")) == ProfileStatus::BadField,
+              "largeur hors de -100..100 : BadField");
+        CHECK(parse(doc("", "", "\"width\": 100,")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].width == 100, "largeur +100 acceptée");
+        CHECK(parse(doc("", "", "\"balance\": 51,")) == ProfileStatus::BadField && parse(doc("", "", "\"balance\": -51,")) == ProfileStatus::BadField,
+              "balance hors de -50..50 : BadField");
+        // Écriture hors bornes refusée.
+        source.loops[0].tracks[1].width = 101;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : largeur de piste 101 refusée");
+        source.loops[0].tracks[1].width = -101;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : largeur de piste -101 refusée");
+        source.loops[0].tracks[1].width   = -100;
+        source.loops[0].tracks[2].balance = -51;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : balance de piste -51 refusée");
+        source.loops[0].tracks[2].balance = 50;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) > 0, "(valeurs remises dans les bornes : l'écriture repasse)");
+    }
+
+    // ----- Profil plein, tout rempli : 12 clés par piste, 3 notes supplémentaires dans chaque pas, pans extrêmes -----
+    {
+        static char big[300 * 1024];
         source = ProfileData{};
         source.add_sample("Kick1.wav");
         source.loop_count = MAX_LOOPS;
@@ -493,14 +627,17 @@ int main() {
                 td.gain       = 0.75f;
                 td.pattern    = static_cast<uint16_t>(l * 100 + t);
                 td.quantize   = static_cast<uint8_t>((l + t) % 101);
+                td.width      = static_cast<int8_t>(t % 2 ? -100 : 100);
+                td.balance    = static_cast<int8_t>(l % 2 ? -50 : 50);
                 for (int s = 0; s < cfg::MAX_STEPS; ++s) {
                     td.step_velocity[s] = static_cast<uint8_t>(1 + (l + t + s * 7) % 127);
                     td.step_pitch[s]    = static_cast<int8_t>((l + t * 3 + s) % 25 - 12);
                     td.step_offset[s]   = static_cast<int8_t>((l * 5 + t * 3 + s * 11) % 128 - 64);
+                    td.step_pan[s]      = static_cast<int8_t>(s % 2 ? -50 : 50);  // le plus long à écrire
                     td.extra_count[s]   = cfg::MAX_EXTRA_HITS;
                     for (int h = 0; h < cfg::MAX_EXTRA_HITS; ++h)
                         td.extra[s][h] = {static_cast<int8_t>((l + t + s + h * 17) % 128 - 64), static_cast<uint8_t>(1 + (l + s + h * 31) % 127),
-                                          static_cast<int8_t>((t + s + h) % 25 - 12)};
+                                          static_cast<int8_t>((t + s + h) % 25 - 12), static_cast<int8_t>(h % 2 ? 50 : -50)};
                 }
             }
         }
@@ -513,13 +650,13 @@ int main() {
             for (int t = 0; same && t < cfg::MAX_TRACKS; ++t) {
                 const TrackData& a = parsed.loops[l].tracks[t];
                 const TrackData& b = source.loops[l].tracks[t];
-                same = same && a.quantize == b.quantize;
+                same = same && a.quantize == b.quantize && a.width == b.width && a.balance == b.balance;
                 for (int s = 0; same && s < cfg::MAX_STEPS; ++s) {
                     same = same && a.step_offset[s] == b.step_offset[s] && a.step_velocity[s] == b.step_velocity[s] && a.step_pitch[s] == b.step_pitch[s] &&
-                           a.extra_count[s] == b.extra_count[s];
+                           a.step_pan[s] == b.step_pan[s] && a.extra_count[s] == b.extra_count[s];
                     for (int h = 0; same && h < a.extra_count[s]; ++h)
                         same = same && a.extra[s][h].offset == b.extra[s][h].offset && a.extra[s][h].velocity == b.extra[s][h].velocity &&
-                               a.extra[s][h].pitch == b.extra[s][h].pitch;
+                               a.extra[s][h].pitch == b.extra[s][h].pitch && a.extra[s][h].pan == b.extra[s][h].pan;
                 }
             }
         CHECK(same, "toutes les valeurs restituées");
@@ -549,9 +686,12 @@ int main() {
             source.loops[l].tracks[1].step_pitch[5]    = -7;
             source.loops[l].tracks[0].step_offset[6]   = -20;
             source.loops[l].tracks[0].quantize         = 40;
+            source.loops[l].tracks[0].step_pan[7]      = -35;
+            source.loops[l].tracks[0].width            = -20;
+            source.loops[l].tracks[1].balance          = 15;
             source.loops[l].tracks[1].extra_count[2]   = 2;
-            source.loops[l].tracks[1].extra[2][0]      = {-10, 90, 3};
-            source.loops[l].tracks[1].extra[2][1]      = {12, 70, -3};
+            source.loops[l].tracks[1].extra[2][0]      = {-10, 90, 3, 20};
+            source.loops[l].tracks[1].extra[2][1]      = {12, 70, -3, -45};
         }
         const int len = ProfileCodec::write(source, buffer, sizeof buffer);
 
@@ -590,7 +730,9 @@ int main() {
                 for (int l = 0; l < parsed.loop_count; ++l)
                     for (int t = 0; t < parsed.loops[l].track_count; ++t) {
                         consistent = consistent && parsed.loops[l].tracks[t].sample < parsed.sample_count;
-                        consistent = consistent && parsed.loops[l].tracks[t].quantize <= cfg::QUANTIZE_MAX;
+                        consistent = consistent && parsed.loops[l].tracks[t].quantize <= cfg::QUANTIZE_MAX &&
+                                     parsed.loops[l].tracks[t].width >= cfg::WIDTH_MIN && parsed.loops[l].tracks[t].width <= cfg::WIDTH_MAX &&
+                                     parsed.loops[l].tracks[t].balance >= cfg::PAN_MIN && parsed.loops[l].tracks[t].balance <= cfg::PAN_MAX;
                         for (int s = 0; s < cfg::MAX_STEPS; ++s) {
                             const TrackData& td = parsed.loops[l].tracks[t];
                             consistent = consistent && td.step_offset[s] >= cfg::OFFSET_MIN && td.step_offset[s] <= cfg::OFFSET_MAX &&
@@ -598,13 +740,15 @@ int main() {
                             for (int h = 0; h < td.extra_count[s] && h < cfg::MAX_EXTRA_HITS; ++h)
                                 consistent = consistent && td.extra[s][h].offset >= cfg::OFFSET_MIN && td.extra[s][h].offset <= cfg::OFFSET_MAX &&
                                              td.extra[s][h].velocity >= cfg::VELOCITY_MIN && td.extra[s][h].velocity <= cfg::VELOCITY_MAX &&
-                                             td.extra[s][h].pitch >= cfg::STEP_PITCH_MIN && td.extra[s][h].pitch <= cfg::STEP_PITCH_MAX;
+                                             td.extra[s][h].pitch >= cfg::STEP_PITCH_MIN && td.extra[s][h].pitch <= cfg::STEP_PITCH_MAX &&
+                                             td.extra[s][h].pan >= cfg::PAN_MIN && td.extra[s][h].pan <= cfg::PAN_MAX;
                         }
                         for (int s = 0; s < cfg::MAX_STEPS; ++s)
                             consistent = consistent && parsed.loops[l].tracks[t].step_velocity[s] >= cfg::VELOCITY_MIN &&
                                          parsed.loops[l].tracks[t].step_velocity[s] <= cfg::VELOCITY_MAX &&
                                          parsed.loops[l].tracks[t].step_pitch[s] >= cfg::STEP_PITCH_MIN &&
-                                         parsed.loops[l].tracks[t].step_pitch[s] <= cfg::STEP_PITCH_MAX;
+                                         parsed.loops[l].tracks[t].step_pitch[s] <= cfg::STEP_PITCH_MAX &&
+                                         parsed.loops[l].tracks[t].step_pan[s] >= cfg::PAN_MIN && parsed.loops[l].tracks[t].step_pan[s] <= cfg::PAN_MAX;
                     }
                 CHECK(consistent, "profil accepté après altération : données cohérentes");
             }

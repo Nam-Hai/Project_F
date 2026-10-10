@@ -20,7 +20,7 @@ int main(int argc, char** argv) {
 
     std::vector<int16_t> data;
     std::string          error;
-    if (!load_wav_mono16(argv[1], data, error)) {
+    if (!load_wav_mono(argv[1], data, error)) {
         std::fprintf(stderr, "%s : %s\n", argv[1], error.c_str());
         return 1;
     }

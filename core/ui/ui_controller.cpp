@@ -47,6 +47,12 @@ void move_in_list(int& cursor, int& scroll, int items, int delta, int min_cursor
     reveal(cursor, scroll);
 }
 
+// Balance ou pan en texte : « C » au centre, « L35 » à gauche, « R20 » à droite.
+void pan_text(char* dst, std::size_t cap, int v) {
+    if (v == 0) std::snprintf(dst, cap, "C");
+    else std::snprintf(dst, cap, "%c%d", v < 0 ? 'L' : 'R', v < 0 ? -v : v);
+}
+
 }  // namespace
 
 // ============================================================================================
@@ -119,7 +125,12 @@ void UiController::handle(const InputEvent& e) {
         case InputEvent::Play:   on_play(); break;
         case InputEvent::Step:   on_step(e.index); break;
         case InputEvent::Black:  on_black(e.index); break;
+        case InputEvent::BlackUp: on_black_up(e.index); break;
         case InputEvent::PotBpm: on_pot_bpm(e.value); break;
+    }
+    if (view_ != View::Pattern) {  // les réglages tenus n'existent que dans la vue Pattern
+        setting_   = TrackSetting::None;
+        held_mask_ = 0;
     }
 }
 
@@ -137,10 +148,6 @@ void UiController::on_wheel(int delta) {
             }
             break;
         case View::Menu: {
-            if (quantize_edit_) {
-                adjust_quantize(delta);
-                break;
-            }
             int unused = 0;
             move_in_list(menu_cursor_, unused, menu_item_count(), delta);
             confirm_ = false;
@@ -151,7 +158,8 @@ void UiController::on_wheel(int delta) {
             confirm_ = false;
             break;
         case View::Pattern:
-            adjust_step_value(delta);
+            if (setting_ != TrackSetting::None) adjust_track_setting(delta);  // un réglage de la piste est tenu
+            else adjust_step_value(delta);
             break;
         case View::Keyboard:
             break;
@@ -208,8 +216,9 @@ bool UiController::send_sample(int engine_track) {
     Command c;
     c.type   = Command::SetTrackSample;
     c.track  = static_cast<uint8_t>(engine_track);
-    c.data   = data;
-    c.length = length;
+    c.data     = data;
+    c.length   = length;
+    c.channels = static_cast<uint8_t>(library_->channels(data));
     if (!sink_.push(c)) {  // file pleine : on ne garde rien, le buffer est rendu
         library_->discard(data);
         notify(" Echec du chargement");
@@ -302,8 +311,7 @@ void UiController::on_back() {
             leave_add();
             break;
         case View::Menu:
-            if (quantize_edit_) quantize_edit_ = false;  // d'abord sortir du réglage
-            else close_menu();
+            close_menu();
             break;
         case View::Loops:
             confirm_ = false;
@@ -352,14 +360,15 @@ void UiController::on_menu() {
     }
 }
 
-// Mode : Edit -> Velocity -> Pitch -> Timing -> Edit, dans la vue Pattern seulement.
+// Mode : Edit -> Velocity -> Pitch -> Timing -> Balance -> Edit, dans la vue Pattern seulement.
 void UiController::on_mode() {
     if (view_ != View::Pattern) return;
     switch (edit_mode_) {
         case EditMode::Edit:     edit_mode_ = EditMode::Velocity; break;
         case EditMode::Velocity: edit_mode_ = EditMode::Pitch; break;
         case EditMode::Pitch:    edit_mode_ = EditMode::Timing; break;
-        case EditMode::Timing:   edit_mode_ = EditMode::Edit; break;
+        case EditMode::Timing:   edit_mode_ = EditMode::Balance; break;
+        case EditMode::Balance:  edit_mode_ = EditMode::Edit; break;
     }
     audition_pending_ = false;
 }
@@ -387,14 +396,18 @@ bool UiController::shift_step_notes(Track& t, int s, int delta) {
         case EditMode::Velocity: lo = cfg::VELOCITY_MIN;   hi = cfg::VELOCITY_MAX;   per = VELOCITY_PER_NOTCH; break;
         case EditMode::Pitch:    lo = cfg::STEP_PITCH_MIN; hi = cfg::STEP_PITCH_MAX; per = 1; break;
         case EditMode::Timing:   lo = cfg::OFFSET_MIN;     hi = cfg::OFFSET_MAX;     per = OFFSET_PER_NOTCH; break;
+        case EditMode::Balance:  lo = cfg::PAN_MIN;        hi = cfg::PAN_MAX;        per = BALANCE_PER_NOTCH; break;
         case EditMode::Edit:     return false;
     }
     auto value = [&](int n) -> int {  // n = 0 : note principale ; n >= 1 : note supplémentaire n
         if (n == 0) {
-            return edit_mode_ == EditMode::Velocity ? t.step_velocity[s] : edit_mode_ == EditMode::Pitch ? t.step_pitch[s] : t.step_offset[s];
+            return edit_mode_ == EditMode::Velocity ? t.step_velocity[s]
+                 : edit_mode_ == EditMode::Pitch    ? t.step_pitch[s]
+                 : edit_mode_ == EditMode::Balance  ? t.step_pan[s]
+                                                    : t.step_offset[s];
         }
         const Hit& h = t.extra[s][n - 1];
-        return edit_mode_ == EditMode::Velocity ? h.velocity : edit_mode_ == EditMode::Pitch ? h.pitch : h.offset;
+        return edit_mode_ == EditMode::Velocity ? h.velocity : edit_mode_ == EditMode::Pitch ? h.pitch : edit_mode_ == EditMode::Balance ? h.pan : h.offset;
     };
 
     const int notes = 1 + t.extra_count[s];
@@ -411,17 +424,20 @@ bool UiController::shift_step_notes(Track& t, int s, int delta) {
     c.step  = static_cast<uint8_t>(s);
     c.type  = edit_mode_ == EditMode::Velocity ? Command::SetStepVelocity
             : edit_mode_ == EditMode::Pitch    ? Command::SetStepPitch
+            : edit_mode_ == EditMode::Balance  ? Command::SetStepPan
                                                : Command::SetStepOffset;
     c.value = static_cast<float>(value(0) + d);
     if (!sink_.push(c)) return false;
     if (edit_mode_ == EditMode::Velocity)   t.step_velocity[s] = static_cast<uint8_t>(t.step_velocity[s] + d);
     else if (edit_mode_ == EditMode::Pitch) t.step_pitch[s]    = static_cast<int8_t>(t.step_pitch[s] + d);
+    else if (edit_mode_ == EditMode::Balance) t.step_pan[s]    = static_cast<int8_t>(t.step_pan[s] + d);
     else                                    t.step_offset[s]   = static_cast<int8_t>(t.step_offset[s] + d);
 
     for (int n = 1; n < notes; ++n) {
         Hit h = t.extra[s][n - 1];
         if (edit_mode_ == EditMode::Velocity)   h.velocity = static_cast<uint8_t>(h.velocity + d);
         else if (edit_mode_ == EditMode::Pitch) h.pitch    = static_cast<int8_t>(h.pitch + d);
+        else if (edit_mode_ == EditMode::Balance) h.pan    = static_cast<int8_t>(h.pan + d);
         else                                    h.offset   = static_cast<int8_t>(h.offset + d);
 
         Command e;
@@ -432,26 +448,61 @@ bool UiController::shift_step_notes(Track& t, int s, int delta) {
         e.offset = h.offset;
         e.value  = static_cast<float>(h.velocity);
         e.pitch  = h.pitch;
+        e.pan    = h.pan;
         if (!sink_.push(e)) break;  // file pleine : le modèle suit ce que le moteur a reçu
         t.extra[s][n - 1] = h;
     }
     return true;
 }
 
-// Menu de la piste, ligne « Quantifier » : la force de quantification change à la roue, par pas de 5 %.
-void UiController::adjust_quantize(int delta) {
-    Track& t = tracks_[selected_];
-    int    q = t.quantize + delta * QUANTIZE_PER_NOTCH;
-    if (q < 0) q = 0;
-    if (q > cfg::QUANTIZE_MAX) q = cfg::QUANTIZE_MAX;
-    if (q == t.quantize) return;
+// Touche noire de réglage relâchée : on revient à l'état d'avant (si une autre est encore tenue, c'est elle qui règle).
+void UiController::on_black_up(int index) {
+    if (index < 1 || index > 3) return;
+    held_mask_ = static_cast<uint8_t>(held_mask_ & ~(1u << index));
 
+    const TrackSetting released = index == 1 ? TrackSetting::Quantize : index == 2 ? TrackSetting::Width : TrackSetting::Balance;
+    if (setting_ != released) return;
+    setting_ = TrackSetting::None;
+    for (int k = 3; k >= 1; --k) {
+        if ((held_mask_ >> k) & 1u) {
+            setting_ = k == 1 ? TrackSetting::Quantize : k == 2 ? TrackSetting::Width : TrackSetting::Balance;
+            break;
+        }
+    }
+}
+
+// Réglage de la piste tenu : la roue change la valeur par pas de 5 (la force de quantification en %, le pan
+// et la balance de la piste en points), avec effet immédiat.
+void UiController::adjust_track_setting(int delta) {
+    Track&  t = tracks_[selected_];
     Command c;
-    c.type  = Command::SetTrackQuantize;
     c.track = t.engine_track;
-    c.value = static_cast<float>(q);
-    if (!sink_.push(c)) return;
-    t.quantize = static_cast<uint8_t>(q);
+
+    if (setting_ == TrackSetting::Quantize) {
+        int q = t.quantize + delta * QUANTIZE_PER_NOTCH;
+        if (q < 0) q = 0;
+        if (q > cfg::QUANTIZE_MAX) q = cfg::QUANTIZE_MAX;
+        if (q == t.quantize) return;
+        c.type  = Command::SetTrackQuantize;
+        c.value = static_cast<float>(q);
+        if (!sink_.push(c)) return;
+        t.quantize = static_cast<uint8_t>(q);
+    } else if (setting_ == TrackSetting::Width || setting_ == TrackSetting::Balance) {
+        const bool width = setting_ == TrackSetting::Width;
+        int8_t&    field = width ? t.width : t.balance;
+        int        v     = field + delta * TRACK_PAN_PER_NOTCH;
+        const int  lo    = width ? cfg::WIDTH_MIN : cfg::PAN_MIN;
+        const int  hi    = width ? cfg::WIDTH_MAX : cfg::PAN_MAX;
+        if (v < lo) v = lo;
+        if (v > hi) v = hi;
+        if (v == field) return;
+        c.type  = width ? Command::SetTrackWidth : Command::SetTrackBalance;
+        c.value = static_cast<float>(v);
+        if (!sink_.push(c)) return;
+        field = static_cast<int8_t>(v);
+    } else {
+        return;
+    }
     mark_dirty();
 }
 
@@ -478,10 +529,16 @@ void UiController::on_black(int index) {
     if (index < 0 || index >= keyboard::BLACK_KEYS) return;
 
     if (view_ == View::Keyboard) {
-        play_key(keyboard::BLACK_PITCH[index], keyboard::WHITE_KEYS + index);
+        play_key(keyboard::BLACK_PITCH[index]);
         return;
     }
-    if (index != 0) return;
+    if (view_ == View::Pattern && index >= 1 && index <= 3) {  // tenir : règle Quantifier, Pan ou Balance de la piste
+        held_mask_ = static_cast<uint8_t>(held_mask_ | (1u << index));
+        setting_   = index == 1 ? TrackSetting::Quantize : index == 2 ? TrackSetting::Width : TrackSetting::Balance;
+        audition_pending_ = false;
+        return;
+    }
+    if (index != REC_BLACK_KEY) return;
 
     if (view_ == View::Pattern) {
         enter_keyboard(selected_);
@@ -490,33 +547,30 @@ void UiController::on_black(int index) {
     } else {
         return;
     }
-    play_key(keyboard::BLACK_PITCH[0], keyboard::WHITE_KEYS);
+    play_key(keyboard::BLACK_PITCH[REC_BLACK_KEY]);
 }
 
 // Touche blanche, dans la vue Clavier : les 14 premières jouent, les deux dernières sont inactives.
 void UiController::on_white_key(int index) {
     if (index < 0 || index >= keyboard::WHITE_KEYS) return;
-    play_key(keyboard::WHITE_PITCH[index], index);
+    play_key(keyboard::WHITE_PITCH[index]);
 }
 
 void UiController::enter_keyboard(int track) {
     keyboard_origin_  = view_;
     selected_         = track;
     audition_pending_ = false;
-    pressed_key_      = -1;
     view_             = View::Keyboard;
 }
 
-// Joue la piste du clavier tout de suite, au pitch de la touche ; la touche s'inverse un instant.
-void UiController::play_key(int pitch, int key_id) {
+// Joue la piste du clavier tout de suite, au pitch de la touche.
+void UiController::play_key(int pitch) {
     Command c;
     c.type  = Command::Note;
     c.track = tracks_[selected_].engine_track;
     c.value = static_cast<float>(KEYBOARD_VELOCITY);
     c.pitch = static_cast<int8_t>(pitch);
-    if (!sink_.push(c)) return;
-    pressed_key_   = key_id;
-    pressed_until_ = now_ms_ + LIT_MS;
+    sink_.push(c);
 }
 
 void UiController::on_play() {
@@ -570,6 +624,20 @@ void UiController::toggle_record() {
         snapshot_      = tracks_[selected_];
         have_snapshot_ = true;
         record_phase_  = 1;  // confirmé ensuite par update()
+
+        // Le moteur vide les pas de la piste au lancement de la prise : le modèle fait de même (la copie ci-dessus
+        // permet de tout restaurer avec « Annuler la prise »). La quantification, la largeur et la balance restent.
+        Track& t  = tracks_[selected_];
+        t.pattern = 0;
+        for (int st = 0; st < cfg::MAX_STEPS; ++st) {
+            t.step_velocity[st] = static_cast<uint8_t>(cfg::VELOCITY_MAX);
+            t.step_pitch[st]    = 0;
+            t.step_pan[st]      = 0;
+            t.step_offset[st]   = 0;
+            t.extra_count[st]   = 0;
+            for (Hit& h : t.extra[st]) h = Hit{};
+        }
+        mark_dirty();
     } else {
         c.type = Command::StopRecord;
         sink_.push(c);
@@ -587,6 +655,7 @@ void UiController::apply_step_event(const StepEvent& ev) {
         t.step_offset[s]  = ev.main.offset;
         t.step_velocity[s] = ev.main.velocity;
         t.step_pitch[s]   = ev.main.pitch;
+        t.step_pan[s]     = ev.main.pan;
         t.extra_count[s]  = ev.extra_count;
         for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[s][e] = ev.extra[e];
         mark_dirty();
@@ -611,6 +680,7 @@ void UiController::undo_take() {
         t.step_velocity[s] = snapshot_.step_velocity[s];
         t.step_pitch[s]    = snapshot_.step_pitch[s];
         t.step_offset[s]   = snapshot_.step_offset[s];
+        t.step_pan[s]      = snapshot_.step_pan[s];
         t.extra_count[s]   = snapshot_.extra_count[s];
         for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[s][e] = snapshot_.extra[s][e];
     }
@@ -618,7 +688,7 @@ void UiController::undo_take() {
 
     int extras = 0;
     for (int s = 0; s < cfg::MAX_STEPS; ++s) extras += snapshot_.extra_count[s];
-    restore_total_ = 4 * cfg::MAX_STEPS + 2 + extras;
+    restore_total_ = 5 * cfg::MAX_STEPS + 2 + extras;
     restore_next_  = 0;
     restoring_     = true;
     pump_restore();
@@ -626,7 +696,7 @@ void UiController::undo_take() {
 }
 
 // Commande numéro `index` de la remise en état : d'abord les notes supplémentaires effacées, puis chaque
-// vélocité, pitch et décalage, le pattern, la quantification, enfin les notes supplémentaires de la copie.
+// vélocité, pitch, décalage et balance de chaque pas, le pattern, la quantification, enfin les notes supplémentaires de la copie (82 commandes au minimum).
 bool UiController::restore_command(int index, Command& c) const {
     c = Command{};
     c.track = snapshot_.engine_track;
@@ -648,14 +718,18 @@ bool UiController::restore_command(int index, Command& c) const {
         c.type  = Command::SetStepOffset;
         c.step  = static_cast<uint8_t>(index - 3 * n);
         c.value = static_cast<float>(snapshot_.step_offset[index - 3 * n]);
-    } else if (index == 4 * n) {
+    } else if (index < 5 * n) {
+        c.type  = Command::SetStepPan;
+        c.step  = static_cast<uint8_t>(index - 4 * n);
+        c.value = static_cast<float>(snapshot_.step_pan[index - 4 * n]);
+    } else if (index == 5 * n) {
         c.type   = Command::SetTrackPattern;
         c.length = snapshot_.pattern;
-    } else if (index == 4 * n + 1) {
+    } else if (index == 5 * n + 1) {
         c.type  = Command::SetTrackQuantize;
         c.value = static_cast<float>(snapshot_.quantize);
     } else {
-        int k = index - (4 * n + 2);
+        int k = index - (5 * n + 2);
         for (int s = 0; s < n; ++s) {
             if (k >= snapshot_.extra_count[s]) {
                 k -= snapshot_.extra_count[s];
@@ -668,6 +742,7 @@ bool UiController::restore_command(int index, Command& c) const {
             c.offset     = h.offset;
             c.value      = static_cast<float>(h.velocity);
             c.pitch      = h.pitch;
+            c.pan        = h.pan;
             return true;
         }
         return false;
@@ -711,18 +786,16 @@ void UiController::open_menu(MenuKind kind) {
     menu_origin_ = view_;
     menu_cursor_ = 0;
     confirm_     = false;
-    quantize_edit_ = false;
     view_        = View::Menu;
 }
 
 void UiController::close_menu() {
-    confirm_       = false;
-    quantize_edit_ = false;
+    confirm_ = false;
     view_    = menu_origin_;
 }
 
 int UiController::menu_item_count() const {
-    return menu_kind_ == MenuKind::LoopItem || menu_kind_ == MenuKind::Keyboard ? 2 : menu_kind_ == MenuKind::Track ? 4 : 3;
+    return menu_kind_ == MenuKind::LoopItem || menu_kind_ == MenuKind::Keyboard ? 2 : 3;
 }
 
 void UiController::on_menu_ok() {
@@ -731,8 +804,6 @@ void UiController::on_menu_ok() {
             if (menu_cursor_ == 0) {
                 if (library_ && library_->count() > 0) open_add(true);
             } else if (menu_cursor_ == 1) {
-                quantize_edit_ = !quantize_edit_;  // Valider entre dans le réglage, puis le confirme
-            } else if (menu_cursor_ == 2) {
                 if (confirm_) delete_selected();
                 else confirm_ = true;  // première validation : on demande confirmation
             } else {
@@ -821,6 +892,7 @@ void UiController::load_loop(int slot) {
             continue;
         }
         p.loop_track = t;
+        p.channels   = library_->channels(p.data);
         ++plan_count_;
     }
 
@@ -843,7 +915,10 @@ void UiController::load_loop(int slot) {
                                     td.step_velocity, td.step_pitch);
         Track& t        = tracks_[index];
         t.quantize      = td.quantize;
+        t.width        = td.width;
+        t.balance      = td.balance;
         for (int st = 0; st < cfg::MAX_STEPS; ++st) {
+            t.step_pan[st]    = td.step_pan[st];
             t.step_offset[st] = td.step_offset[st];
             t.extra_count[st] = td.extra_count[st];
             for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[st][e] = td.extra[st][e];
@@ -876,18 +951,19 @@ void UiController::load_loop(int slot) {
 // qui s'écarte de la valeur par défaut, une par note supplémentaire, une pour la quantification si elle
 // n'est pas nulle.
 int UiController::count_extras(const profile::TrackData& td) {
-    int n = td.quantize != 0;
+    int n = (td.quantize != 0) + (td.width != 0) + (td.balance != 0);
     for (int s = 0; s < cfg::MAX_STEPS; ++s) {
         n += td.step_velocity[s] != cfg::VELOCITY_MAX;
         n += td.step_pitch[s] != 0;
+        n += td.step_pan[s] != 0;
         n += td.step_offset[s] != 0;
         n += td.extra_count[s];
     }
     return n;
 }
 
-// La `index`-ième commande de réglage d'une piste : les vélocités, puis les pitchs, les décalages, les notes
-// supplémentaires (pas par pas) et enfin la quantification.
+// La `index`-ième commande de réglage d'une piste : les vélocités, puis les pitchs, les balances des pas, les
+// décalages, les notes supplémentaires (pas par pas), la quantification, la largeur et la balance de la piste.
 bool UiController::extra_command(const profile::TrackData& td, int index, int track, Command& c) {
     c.track = static_cast<uint8_t>(track);
 
@@ -910,6 +986,15 @@ bool UiController::extra_command(const profile::TrackData& td, int index, int tr
         }
     }
     for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+        if (td.step_pan[s] == 0) continue;
+        if (index-- == 0) {
+            c.type  = Command::SetStepPan;
+            c.step  = static_cast<uint8_t>(s);
+            c.value = static_cast<float>(td.step_pan[s]);
+            return true;
+        }
+    }
+    for (int s = 0; s < cfg::MAX_STEPS; ++s) {
         if (td.step_offset[s] == 0) continue;
         if (index-- == 0) {
             c.type  = Command::SetStepOffset;
@@ -928,12 +1013,23 @@ bool UiController::extra_command(const profile::TrackData& td, int index, int tr
             c.offset     = h.offset;
             c.value      = static_cast<float>(h.velocity);
             c.pitch      = h.pitch;
+            c.pan        = h.pan;
             return true;
         }
     }
-    if (td.quantize != 0 && index == 0) {
+    if (td.quantize != 0 && index-- == 0) {
         c.type  = Command::SetTrackQuantize;
         c.value = static_cast<float>(td.quantize);
+        return true;
+    }
+    if (td.width != 0 && index-- == 0) {
+        c.type  = Command::SetTrackWidth;
+        c.value = static_cast<float>(td.width);
+        return true;
+    }
+    if (td.balance != 0 && index-- == 0) {
+        c.type  = Command::SetTrackBalance;
+        c.value = static_cast<float>(td.balance);
         return true;
     }
     return false;
@@ -965,9 +1061,10 @@ bool UiController::next_load_command(int index, Command& c) const {
 
     switch (offset) {
         case 0:
-            c.type   = Command::SetTrackSample;
-            c.data   = p.data;
-            c.length = p.length;
+            c.type     = Command::SetTrackSample;
+            c.data     = p.data;
+            c.length   = p.length;
+            c.channels = static_cast<uint8_t>(p.channels);
             return true;
         case 1:
             c.type  = Command::SetTrackGain;
@@ -1032,11 +1129,14 @@ bool UiController::build_loop(profile::LoopData& out) {
         for (int s = 0; s < cfg::MAX_STEPS; ++s) {
             td.step_velocity[s] = t.step_velocity[s];
             td.step_pitch[s]    = t.step_pitch[s];
+            td.step_pan[s]      = t.step_pan[s];
             td.step_offset[s]   = t.step_offset[s];
             td.extra_count[s]   = t.extra_count[s];
             for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) td.extra[s][e] = t.extra[s][e];
         }
         td.quantize = t.quantize;
+        td.width    = t.width;
+        td.balance  = t.balance;
     }
     return true;
 }
@@ -1111,9 +1211,10 @@ void UiController::play_preview(int index) {
     if (!library_->load(index, data, length)) return;  // l'écoute est facultative : pas d'erreur affichée
 
     Command c;
-    c.type   = Command::PreviewSample;
-    c.data   = data;
-    c.length = length;
+    c.type     = Command::PreviewSample;
+    c.data     = data;
+    c.length   = length;
+    c.channels = static_cast<uint8_t>(library_->channels(data));
     if (!sink_.push(c)) {
         library_->discard(data);
         return;
@@ -1186,8 +1287,11 @@ void UiController::render(Canvas& c) const {
         case View::Pattern: {
             // Le mode en haut à droite : une lettre, E, V ou P. Elle se place à gauche du BPM : le titre
             // est donc coupé à 13 caractères dans cette vue.
-            const char letter = edit_mode_ == EditMode::Edit ? 'E' : edit_mode_ == EditMode::Velocity ? 'V' : edit_mode_ == EditMode::Pitch ? 'P' : 'T';
-            render_header(c, tracks_[selected_].name, false, letter, 13);
+            // Un réglage de la piste tenu (touche noire) remplace la lettre par son nom, plus long : titre coupé à 8.
+            static const char* const LETTERS[] = {"E", "V", "P", "T", "B"};
+            static const char* const SETTINGS[] = {"", "Quant", "Wide", "Bal"};
+            const bool held = setting_ != TrackSetting::None;
+            render_header(c, tracks_[selected_].name, false, held ? SETTINGS[static_cast<int>(setting_)] : LETTERS[static_cast<int>(edit_mode_)], held ? 8 : 13);
             render_pattern(c);
             break;
         }
@@ -1209,17 +1313,26 @@ void UiController::render(Canvas& c) const {
             render_header(c, "Loops", false);
             render_loops(c);
             break;
-        case View::Keyboard:
-            render_header(c, tracks_[selected_].name, false, 0, record_phase_ != 0 ? 8 : 16);
-            render_keyboard(c);
+        case View::Keyboard: {
+            // Mode Clavier / Rec : le nom du mode (ou le décompte, ou REC) à droite, et la timeline du pattern.
+            char text[8];
+            if (record_phase_ == 1) {
+                // Décompte des temps restants : 4 pendant le premier temps du pré-compte, puis 3, 2, 1.
+                std::snprintf(text, sizeof text, "PRE %d", precount_step_ < 0 ? 4 : 4 - precount_step_ / 4);
+            } else {
+                std::snprintf(text, sizeof text, "%s", record_phase_ == 2 ? "REC" : "KEY");
+            }
+            render_header(c, tracks_[selected_].name, false, text, 8);
+            render_pattern(c, true);
             break;
+        }
     }
     if (error_shown()) render_notice(c);
 }
 
 // En-tête : titre à gauche (16 caractères au plus), à droite l'état lecture / pause et le BPM ;
 // dans la vue Pistes, le numéro de la loop et son indicateur de modification s'y ajoutent.
-void UiController::render_header(Canvas& c, const char* title, bool show_loop, char mode_letter, int max_title) const {
+void UiController::render_header(Canvas& c, const char* title, bool show_loop, const char* mode_text, int max_title) const {
     char shown[17];
     if (max_title > 16) max_title = 16;
     std::snprintf(shown, sizeof shown, "%.*s", max_title, title);
@@ -1238,10 +1351,7 @@ void UiController::render_header(Canvas& c, const char* title, bool show_loop, c
     const int bpm_x = icon_x - 4 - Canvas::text_width(bpm);
     c.text(bpm_x, 0, bpm);
 
-    if (mode_letter) {
-        const char letter[2] = {mode_letter, '\0'};
-        c.text(bpm_x - 6 - Canvas::CHAR_W, 0, letter);
-    }
+    if (mode_text) c.text(bpm_x - 6 - Canvas::CHAR_W * static_cast<int>(std::strlen(mode_text)), 0, mode_text);
 
     if (show_loop) {
         char loop[8];
@@ -1281,8 +1391,13 @@ void UiController::render_tracks(Canvas& c) const {
 //            vers le haut (jusqu'à 2 lignes), un pitch négatif vers le bas.
 // L'écran est en 1 bit : pas de transparence, donc des niveaux de remplissage. Le texte donne la
 // valeur exacte.
-void UiController::render_pattern(Canvas& c) const {
+void UiController::render_pattern(Canvas& c, bool timeline) const {
     constexpr int Y = 24;  // haut des boîtes de pas
+
+    // Timeline (mode Clavier / Rec) : les boîtes comme en Edit, sans sélection de pas, sans jauge.
+    const EditMode mode        = timeline ? EditMode::Edit : edit_mode_;
+    const int      cursor      = timeline ? -1 : step_cursor_;
+    const TrackSetting setting = timeline ? TrackSetting::None : setting_;
 
     const Track& t = tracks_[selected_];
 
@@ -1291,9 +1406,17 @@ void UiController::render_pattern(Canvas& c) const {
         const bool on = (t.pattern >> i) & 1u;
 
 
-        if (edit_mode_ == EditMode::Edit || edit_mode_ == EditMode::Timing || !on) {
-            c.rect(x, Y, 7, 7, on && edit_mode_ != EditMode::Velocity && edit_mode_ != EditMode::Pitch);  // plein = joué, contour = silence
-        } else if (edit_mode_ == EditMode::Velocity) {
+        if (mode == EditMode::Edit || mode == EditMode::Timing || !on) {
+            c.rect(x, Y, 7, 7, on && (mode == EditMode::Edit || mode == EditMode::Timing));  // plein = joué, contour = silence
+        } else if (mode == EditMode::Balance) {
+            // Un trait central ; à gauche ou à droite, une colonne de plus se remplit dès 10 et deux dès 30.
+            c.rect(x, Y, 7, 7, false);
+            const int p    = t.step_pan[i];
+            const int cols = (p < 0 ? -p : p) >= 30 ? 2 : (p < 0 ? -p : p) >= 10 ? 1 : 0;
+            c.vline(x + 3, Y + 1, 5);
+            if (cols > 0 && p < 0) c.rect(x + 3 - cols, Y + 1, cols, 5, true);
+            if (cols > 0 && p > 0) c.rect(x + 4, Y + 1, cols, 5, true);
+        } else if (mode == EditMode::Velocity) {
             c.rect(x, Y, 7, 7, false);
             const int rows = 1 + ((t.step_velocity[i] - cfg::VELOCITY_MIN) * 4 + 63) / 126;  // 1..5
             c.rect(x + 1, Y + 6 - rows, 5, rows, true);
@@ -1310,30 +1433,61 @@ void UiController::render_pattern(Canvas& c) const {
         }
 
         if (i % 4 == 0) c.vline(x + 3, Y - 6, 3);            // repère de temps tous les 4 pas
-        if (i == step_cursor_) c.hline(x, Y - 2, 7);         // pas sélectionné
+        if (i == cursor) c.hline(x, Y - 2, 7);         // pas sélectionné
         if (i == play_step_) c.rect(x, Y + 9, 7, 2, true);   // pas en cours de lecture
     }
 
-    // Bas de l'écran. Edit : l'état du dernier pas touché. Velocity et Pitch : une jauge horizontale pour
-    // le pas sélectionné (s'il est joué), avec sa valeur exacte à droite.
+    // Bas de l'écran. Edit : rien. Les autres modes : une jauge horizontale pour le pas sélectionné
+    // (s'il est joué), avec sa valeur exacte à droite.
     constexpr int GAUGE_Y = 6 * Canvas::CHAR_H;   // même rangée que le texte d'Edit
     constexpr int GAUGE_W = 100;                  // largeur de la jauge, contour compris
-    const bool    selected_on = step_cursor_ >= 0 && ((t.pattern >> step_cursor_) & 1u);
+    const bool    selected_on = cursor >= 0 && ((t.pattern >> cursor) & 1u);
 
-    if (edit_mode_ != EditMode::Edit && selected_on) {
+    if (setting != TrackSetting::None) {
+        // Réglage de la piste tenu : sa jauge remplace celle du pas. Quantifier : de la gauche vers la droite
+        // (rien à 0 %) ; Pan et Balance : du centre, comme la balance d'une note.
+        char value[8];
+        c.rect(0, GAUGE_Y, GAUGE_W, 7, false);
+        if (setting == TrackSetting::Quantize) {
+            const int q    = t.quantize;
+            const int fill = q * (GAUGE_W - 3) / cfg::QUANTIZE_MAX;
+            if (fill > 0) c.rect(1, GAUGE_Y + 1, fill, 5, true);
+            std::snprintf(value, sizeof value, "%d%%", q);
+        } else if (setting == TrackSetting::Width) {
+            // Du centre (0 = inchangé) : vers la gauche pour le mono (100M = mono complet), vers la droite pour
+            // élargir (100W = côtés doublés). Presque un demi-pixel par point : 48 pixels pour 100.
+            const int v      = t.width;
+            const int center = GAUGE_W / 2;
+            const int cols   = ((v < 0 ? -v : v) * 48 + 50) / 100;
+            if (v > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
+            else if (v < 0) c.rect(center - cols, GAUGE_Y + 1, cols, 5, true);
+            c.vline(center, GAUGE_Y - 1, 9);
+            if (v == 0) std::snprintf(value, sizeof value, "0");
+            else        std::snprintf(value, sizeof value, "%d%c", v < 0 ? -v : v, v < 0 ? 'M' : 'W');
+        } else {
+            const int v      = t.balance;
+            const int center = GAUGE_W / 2;
+            const int cols   = ((v < 0 ? -v : v) * 48 + 25) / 50;
+            if (v > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
+            else if (v < 0) c.rect(center - cols, GAUGE_Y + 1, cols, 5, true);
+            c.vline(center, GAUGE_Y - 1, 9);
+            pan_text(value, sizeof value, v);
+        }
+        c.text(GAUGE_W + 4, GAUGE_Y, value);
+    } else if (mode != EditMode::Edit && selected_on) {
         char value[8];
         c.rect(0, GAUGE_Y, GAUGE_W, 7, false);  // contour de la jauge
 
-        if (edit_mode_ == EditMode::Velocity) {
+        if (mode == EditMode::Velocity) {
             // De la gauche vers la droite : 1 pixel pour la vélocité 1, toute la jauge pour 127.
-            const int v    = t.step_velocity[step_cursor_];
+            const int v    = t.step_velocity[cursor];
             const int fill = 1 + (v - cfg::VELOCITY_MIN) * (GAUGE_W - 3) / (cfg::VELOCITY_MAX - cfg::VELOCITY_MIN);
             c.rect(1, GAUGE_Y + 1, fill, 5, true);
             std::snprintf(value, sizeof value, "%d", v);
-        } else if (edit_mode_ == EditMode::Timing) {
+        } else if (mode == EditMode::Timing) {
             // Du centre : vers la droite pour une note en retard, vers la gauche pour une note en avance.
             // 3/4 de pixel par graduation : 48 pixels pour 64 (50 % d'un pas).
-            const int o      = t.step_offset[step_cursor_];
+            const int o      = t.step_offset[cursor];
             const int center = GAUGE_W / 2;
             const int cols   = ((o < 0 ? -o : o) * 3 + 2) / 4;
             if (o > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
@@ -1342,10 +1496,20 @@ void UiController::render_pattern(Canvas& c) const {
             const int pct = static_cast<int>(std::lround(o * 100.0 / cfg::OFFSET_UNITS));
             if (pct == 0) std::snprintf(value, sizeof value, "0");
             else          std::snprintf(value, sizeof value, "%+d%%", pct);
+        } else if (mode == EditMode::Balance) {
+            // Du centre : vers la droite pour une note à droite, vers la gauche pour une note à gauche.
+            // Presque 1 pixel par point : 48 pixels pour 50.
+            const int p      = t.step_pan[cursor];
+            const int center = GAUGE_W / 2;
+            const int cols   = ((p < 0 ? -p : p) * 48 + 25) / 50;
+            if (p > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
+            else if (p < 0) c.rect(center - cols, GAUGE_Y + 1, cols, 5, true);
+            c.vline(center, GAUGE_Y - 1, 9);
+            pan_text(value, sizeof value, p);
         } else {
             // Du centre : vers la droite pour un pitch positif, vers la gauche pour un pitch négatif.
             // Un trait dépassant la jauge marque le 0.
-            const int p      = t.step_pitch[step_cursor_];
+            const int p      = t.step_pitch[cursor];
             const int center = GAUGE_W / 2;
             const int cols   = (p < 0 ? -p : p) * 4;  // 4 pixels par demi-ton : 48 pour +-12
             if (p > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
@@ -1382,18 +1546,13 @@ void UiController::render_add(Canvas& c) const {
 // Menus : piste (changer le sample / supprimer / annuler), loop (charger / sauvegarder / annuler),
 // loop de la liste (supprimer / annuler). Les actions destructrices demandent une confirmation.
 void UiController::render_menu(Canvas& c) const {
-    const char* labels[4];
-    char        quantize_label[24];
+    const char* labels[3];
     int         count = 3;
     switch (menu_kind_) {
         case MenuKind::Track:
-            std::snprintf(quantize_label, sizeof quantize_label, quantize_edit_ ? " Quantifier <%d%%>" : " Quantifier %d%%",
-                          tracks_[selected_].quantize);
             labels[0] = " Changer le sample";
-            labels[1] = quantize_label;
-            labels[2] = confirm_ ? " Confirmer ?" : " Supprimer la piste";
-            labels[3] = " Annuler";
-            count     = 4;
+            labels[1] = confirm_ ? " Confirmer ?" : " Supprimer la piste";
+            labels[2] = " Annuler";
             break;
         case MenuKind::Loop:
             labels[0] = " Charger une loop";
@@ -1443,57 +1602,6 @@ void UiController::render_loops(Canvas& c) const {
             std::snprintf(label, sizeof label, " + Nouvelle loop");
         }
         c.text(0, y, label, sel);
-    }
-}
-
-// Vue Clavier : un clavier de piano dessiné à l'échelle des boutons (14 blanches de 8 pixels, les deux
-// dernières cases vides ; 10 noires au-dessus, décalées entre deux blanches). La touche jouée s'inverse
-// un instant ; le Do central (note de base) est marqué d'un point. La rangée du bas est réservée à
-// l'enregistrement (rangée du temps).
-void UiController::render_keyboard(Canvas& c) const {
-    constexpr int TOP         = 16;  // haut du clavier
-    constexpr int WHITE_H     = 36;  // hauteur des blanches
-    constexpr int BLACK_H     = 20;  // hauteur des noires
-    constexpr int BLACK_W     = 5;
-
-    const bool lit        = static_cast<int32_t>(pressed_until_ - now_ms_) > 0;
-    const int  pressed    = lit ? pressed_key_ : -1;
-
-    // Blanches : contour, pleine quand elle est jouée.
-    for (int i = 0; i < keyboard::WHITE_KEYS; ++i) {
-        const bool down = (pressed == i);
-        c.rect(i * 8, TOP, 7, WHITE_H, down);
-    }
-    // Note de base : un point au bas du Do central (inversé si la touche est pleine).
-    {
-        const int x = keyboard::ROOT_WHITE * 8 + 2;
-        c.rect(x, TOP + WHITE_H - 6, 3, 3, true, pressed != keyboard::ROOT_WHITE);
-    }
-    // Noires : pleines ; creuses quand elles sont jouées.
-    for (int j = 0; j < keyboard::BLACK_KEYS; ++j) {
-        const int  x0   = keyboard::BLACK_LEFT_WHITE[j] * 8 + 5;
-        const bool down = (pressed == keyboard::WHITE_KEYS + j);
-        c.rect(x0, TOP, BLACK_W, BLACK_H, true, true);
-        if (down) c.rect(x0 + 1, TOP + 1, BLACK_W - 2, BLACK_H - 2, true, false);
-    }
-
-    // Enregistrement : l'indicateur à côté du titre, puis la rangée du temps.
-    if (record_phase_ == 1) {
-        // Décompte des temps restants : 4 pendant le premier temps du pré-compte, puis 3, 2, 1.
-        const int beats_left = precount_step_ < 0 ? 4 : 4 - precount_step_ / 4;
-        char      text[8];
-        std::snprintf(text, sizeof text, "PRE %d", beats_left);
-        c.text(54, 0, text, true);
-    } else if (record_phase_ == 2) {
-        c.text(54, 0, "REC", true);
-    }
-    if (record_phase_ != 0) {
-        // 16 cases : pleine = pas qui porte une note ; un trait dessous marque le pas en cours.
-        const Track& t = tracks_[selected_];
-        for (int i = 0; i < cfg::MAX_STEPS; ++i) {
-            c.rect(i * 8, 54, 7, 5, (t.pattern >> i) & 1u);
-            if (i == play_step_) c.rect(i * 8, 60, 7, 2, true);
-        }
     }
 }
 

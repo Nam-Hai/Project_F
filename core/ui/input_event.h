@@ -13,7 +13,9 @@ struct InputEvent {
         Mode,    // bouton Mode : vue Pattern, passe au mode suivant (Edit, Velocity, Pitch)
         Play,    // bouton Play/Stop
         Step,    // index : bouton de pas 0..15 (touche blanche du clavier dans la vue Clavier)
-        Black,   // index : touche noire 0..9 (la première ouvre la vue Clavier ; les autres jouent dans la vue Clavier)
+        Black,   // index : touche noire 0..9 enfoncée (la première ouvre la vue Clavier ; les autres jouent dans la vue Clavier ;
+                 // dans la vue Pattern, les touches 1 à 3 règlent Quantifier, Pan et Balance de la piste tant qu'elles sont tenues)
+        BlackUp, // index : touche noire 0..9 relâchée (seul le maintien des touches de réglage de la piste s'en sert)
         PotBpm,  // value : position du potard, 0..1
     };
 
@@ -29,6 +31,7 @@ struct InputEvent {
     static InputEvent mode() { return {Mode, 0, 0, 0.0f}; }
     static InputEvent play() { return {Play, 0, 0, 0.0f}; }
     static InputEvent black(int index) { return {Black, 0, static_cast<uint8_t>(index), 0.0f}; }
+    static InputEvent black_up(int index) { return {BlackUp, 0, static_cast<uint8_t>(index), 0.0f}; }
     static InputEvent step(int index) { return {Step, 0, static_cast<uint8_t>(index), 0.0f}; }
     static InputEvent pot_bpm(float value) { return {PotBpm, 0, 0, value}; }
 };

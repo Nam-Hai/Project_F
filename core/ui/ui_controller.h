@@ -23,22 +23,24 @@
 // Vues :
 //   Tracks  - liste des pistes + « Ajouter piste ». En montant au-dessus de la première piste, la
 //             ligne de titre devient sélectionnable : Menu y ouvre le menu de la loop.
-//   Pattern - les 16 pas de la piste choisie, en quatre modes (bouton Mode) : Edit (un pas bascule),
-//             Velocity, Pitch et Timing (un pas se sélectionne, la roue règle sa valeur, pour toutes
-//             les notes du pas ensemble)
+//   Pattern - les 16 pas de la piste choisie, en cinq modes (bouton Mode) : Edit (un pas bascule),
+//             Velocity, Pitch, Timing et Balance (un pas se sélectionne, la roue règle sa valeur, pour
+//             toutes les notes du pas ensemble)
 //   Add     - « Samples » : crée une piste, ou remplace le sample d'une piste ; le sample survolé
 //             est joué en écoute après un court délai
 //   Menu    - menu contextuel (voir MenuKind)
 //   Loops   - la liste des loops du profil, puis « + Nouvelle loop »
-//   Keyboard - clavier de piano : les boutons jouent la piste à différents pitchs (voir keyboard_layout.h).
-//             On y entre avec la première touche noire, depuis la vue Pistes ou Pattern.
+//   Keyboard - mode Clavier / Rec : les 24 touches (16 boutons de pas et 10 touches noires) jouent la piste à
+//             différents pitchs (voir keyboard_layout.h) ; Play lance le pré-compte puis la prise. L'écran montre
+//             la timeline du pattern (pas de piano dessiné). On y entre avec la 10e touche noire, depuis la vue
+//             Pistes ou Pattern ; Back en sort.
 //
 // Le bouton Menu ouvre le menu de la vue courante ; Back (ou Menu de nouveau) le referme.
 class UiController {
 public:
     enum class View : uint8_t { Tracks, Pattern, Add, Menu, Loops, Keyboard };
     enum class MenuKind : uint8_t { Track, Loop, LoopItem, Keyboard };
-    enum class EditMode : uint8_t { Edit, Velocity, Pitch, Timing };
+    enum class EditMode : uint8_t { Edit, Velocity, Pitch, Timing, Balance };
 
     static constexpr int NAME_LEN      = 19;   // caractères du nom affiché (sans « .wav »)
     static constexpr int LIST_ROWS     = 7;    // lignes de liste sous l'en-tête
@@ -47,10 +49,13 @@ public:
     static constexpr uint32_t LIT_MS            = 120;   // durée de l'indicateur de jeu d'une piste
     static constexpr uint32_t ERROR_MS          = 2000;  // durée des messages
     static constexpr uint32_t PREVIEW_DELAY_MS  = 150;   // la roue doit s'arrêter avant l'écoute
+    static constexpr int      REC_BLACK_KEY      = 9;      // la 10e touche noire entre en mode Clavier / Rec
     static constexpr int      KEYBOARD_VELOCITY  = 127;    // les boutons n'ont pas de force de frappe
     static constexpr int      VELOCITY_PER_NOTCH = 4;    // vélocité : 4 points par cran de roue
     static constexpr int      OFFSET_PER_NOTCH   = 2;    // décalage : 2/128 de pas par cran de roue
     static constexpr int      QUANTIZE_PER_NOTCH = 5;    // force de quantification : 5 % par cran de roue
+    static constexpr int      BALANCE_PER_NOTCH  = 2;    // balance d'une note : 2 points par cran de roue
+    static constexpr int      TRACK_PAN_PER_NOTCH = 5;   // largeur et balance de la piste (touche noire tenue) : 5 points par cran
     static constexpr uint32_t AUDITION_MIN_MS    = 60;   // une note d'essai au plus toutes les 60 ms
 
     // `library` et `store` peuvent être nuls : les fonctions qui en dépendent ne font alors rien.
@@ -93,7 +98,7 @@ public:
     bool     confirming() const { return confirm_; }
     bool     confirming_delete() const { return confirm_; }
     int      selected_track() const { return selected_; }
-    int      keyboard_track() const { return selected_; }  // la piste jouée dans la vue Clavier
+    int      keyboard_track() const { return selected_; }  // la piste jouée en mode Clavier / Rec
     int      selected_step() const { return step_cursor_; }
     int      bpm() const { return bpm_; }
     bool     playing() const { return playing_; }
@@ -102,10 +107,15 @@ public:
     int      step_velocity(int track, int step) const { return tracks_[track].step_velocity[step]; }
     int      step_pitch(int track, int step) const { return tracks_[track].step_pitch[step]; }
     int      step_offset(int track, int step) const { return tracks_[track].step_offset[step]; }
+    int      step_pan(int track, int step) const { return tracks_[track].step_pan[step]; }  // balance de la note principale
+    int      track_width(int track) const { return tracks_[track].width; }                  // largeur stéréo de la piste
+    int      track_balance(int track) const { return tracks_[track].balance; }              // balance de base de la piste
     int      extra_count(int track, int step) const { return tracks_[track].extra_count[step]; }
     Hit      extra_hit(int track, int step, int i) const { return tracks_[track].extra[step][i]; }
     int      quantize(int track) const { return tracks_[track].quantize; }
-    bool     editing_quantize() const { return quantize_edit_; }
+    // Réglage de la piste tenu dans la vue Pattern (touches noires 1 à 3) : la roue le règle, la jauge l'affiche.
+    enum class TrackSetting : uint8_t { None, Quantize, Width, Balance };
+    TrackSetting track_setting() const { return setting_; }
     int      record_phase() const { return record_phase_; }  // 0 repos, 1 pré-compte, 2 prise
     bool     can_undo_take() const { return have_snapshot_; }
     const char* track_name(int track) const { return tracks_[track].name; }
@@ -134,10 +144,13 @@ private:
         int8_t   step_pitch[cfg::MAX_STEPS]    = {};
         // Micro-timing : décalage de la note principale (1/128 de pas), notes supplémentaires du pas
         // (roulements), force de quantification de la piste (0..100 %).
+        int8_t   step_pan[cfg::MAX_STEPS]      = {};  // balance de la note principale, -50..50 (0 = suit la piste)
         int8_t   step_offset[cfg::MAX_STEPS]   = {};
         uint8_t  extra_count[cfg::MAX_STEPS]   = {};
         Hit      extra[cfg::MAX_STEPS][cfg::MAX_EXTRA_HITS];
         uint8_t  quantize           = 0;
+        int8_t   width              = 0;  // largeur stéréo de la piste, -100 (mono) .. +100 (côtés x2)
+        int8_t   balance            = 0;  // balance de base de la piste, -50..50
         float    gain               = 1.0f;
         float    pitch              = 1.0f;
         uint32_t last_triggers      = 0;
@@ -150,6 +163,7 @@ private:
         int            loop_track = 0;
         const int16_t* data       = nullptr;
         uint32_t       length     = 0;
+        int            channels   = 1;
         int            first_cmd  = 0;  // numéro de sa première commande dans le chargement
         int            extra      = 0;  // commandes en plus des 4 de base : une par réglage de pas non défaut
     };
@@ -161,7 +175,8 @@ private:
     void on_mode();
     void adjust_step_value(int delta);
     bool shift_step_notes(Track& t, int step, int delta);
-    void adjust_quantize(int delta);
+    void adjust_track_setting(int delta);
+    void on_black_up(int index);
     void toggle_record();
     void apply_step_event(const StepEvent& ev);
     void undo_take();
@@ -172,7 +187,7 @@ private:
     void on_black(int index);
     void on_white_key(int index);
     void enter_keyboard(int track);
-    void play_key(int pitch, int key_id);
+    void play_key(int pitch);
     void on_step(int index);
     void on_pot_bpm(float v);
 
@@ -211,13 +226,12 @@ private:
     void play_preview(int index);
     void stop_preview();
 
-    void render_header(Canvas& c, const char* title, bool show_loop, char mode_letter = 0, int max_title = 16) const;
+    void render_header(Canvas& c, const char* title, bool show_loop, const char* mode_text = nullptr, int max_title = 16) const;
     void render_tracks(Canvas& c) const;
-    void render_pattern(Canvas& c) const;
+    void render_pattern(Canvas& c, bool timeline = false) const;
     void render_add(Canvas& c) const;
     void render_menu(Canvas& c) const;
     void render_loops(Canvas& c) const;
-    void render_keyboard(Canvas& c) const;
     void render_notice(Canvas& c) const;
     bool is_lit(const Track& t) const { return static_cast<int32_t>(t.lit_until - now_ms_) > 0; }
 
@@ -241,15 +255,14 @@ private:
     int  add_cursor_  = 0;   // sample choisi dans la vue Samples
     int  add_scroll_  = 0;
     View keyboard_origin_ = View::Tracks;  // vue à laquelle Back rend la main depuis le clavier
-    int      pressed_key_   = -1;   // dernière touche jouée : blanches 0..13, noires 14..23
-    uint32_t pressed_until_ = 0;    // elle reste inversée jusqu'à cet instant
     bool add_replace_ = false;  // la vue Samples remplace le sample de la piste sélectionnée
 
     MenuKind menu_kind_   = MenuKind::Track;
     View     menu_origin_ = View::Tracks;  // vue à laquelle le menu rend la main
     int      menu_cursor_ = 0;
     bool     confirm_     = false;  // une action destructrice attend sa seconde validation
-    bool     quantize_edit_ = false;  // menu de la piste : la roue règle la force de quantification
+    TrackSetting setting_ = TrackSetting::None;  // réglage de la piste en cours (touche noire 1 à 3 tenue, vue Pattern)
+    uint8_t      held_mask_ = 0;                 // touches noires de réglage actuellement tenues (bit = index)
 
     // Profil et loop courante.
     profile::ProfileData profile_;

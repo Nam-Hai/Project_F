@@ -243,7 +243,7 @@ int main() {
               "T : écarts conservés à la limite");
 
         // Vélocité : 127 / 100 / 60 ; vers le bas, tout descend de 4 par cran.
-        f.feed({InputEvent::mode(), InputEvent::mode()});  // Edit, Velocity
+        f.feed({InputEvent::mode(), InputEvent::mode(), InputEvent::mode()});  // Balance, Edit, Velocity
         f.tick(100);
         f.feed({InputEvent::wheel(-2)});
         CHECK(f.ui.step_velocity(0, 4) == 119 && f.ui.extra_hit(0, 4, 0).velocity == 92 && f.ui.extra_hit(0, 4, 1).velocity == 52,
@@ -281,53 +281,6 @@ int main() {
         f.feed({InputEvent::step(8)});  // éteint le pas 8
         f.ui.render(c);
         CHECK(c.get_pixel(8 * 8, 24) && c.get_pixel(8 * 8 + 6, 24 + 6) && !c.get_pixel(8 * 8 + 3, 24 + 3), "pas éteint : contour vide sur la grille");
-    }
-
-    // ----- Menu de la piste : « Quantifier » -----
-    {
-        Fixture f;
-        f.sink.sent.clear();
-        f.feed({InputEvent::menu(), InputEvent::wheel(1)});
-        Canvas c, ref;
-        f.ui.render(c);
-        ref.rect(0, 16, 128, 8, true);
-        ref.text(0, 16, " Quantifier 40%", true);
-        CHECK(same_rows(c, ref, 16, 24), "ligne « Quantifier 40% »");
-
-        f.feed({InputEvent::ok()});
-        CHECK(f.ui.editing_quantize(), "Valider entre dans le réglage");
-        f.ui.render(c);
-        ref.clear();
-        ref.rect(0, 16, 128, 8, true);
-        ref.text(0, 16, " Quantifier <40%>", true);
-        CHECK(same_rows(c, ref, 16, 24), "libellé du réglage");
-
-        f.feed({InputEvent::wheel(3)});
-        CHECK(f.ui.quantize(0) == 55 && f.ui.menu_cursor() == 1 && f.sink.last(Command::SetTrackQuantize, 0, 0).value == 55.0f && f.ui.dirty(),
-              "la roue règle la force (5 % par cran), le curseur ne bouge pas");
-        f.feed({InputEvent::wheel(100)});
-        CHECK(f.ui.quantize(0) == 100, "borné à 100");
-        f.feed({InputEvent::wheel(-100)});
-        CHECK(f.ui.quantize(0) == 0, "borné à 0");
-        f.sink.sent.clear();
-        f.feed({InputEvent::wheel(-1)});
-        CHECK(f.sink.sent.empty(), "à 0 : rien d'envoyé");
-
-        f.feed({InputEvent::wheel(2)});
-        f.feed({InputEvent::back()});
-        CHECK(f.ui.view() == View::Menu && !f.ui.editing_quantize() && f.ui.quantize(0) == 10, "Back sort du réglage, garde la valeur");
-        f.feed({InputEvent::wheel(1)});
-        CHECK(f.ui.menu_cursor() == 2, "la roue déplace de nouveau le curseur");
-        f.feed({InputEvent::back(), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::menu()});
-        CHECK(f.ui.view() == View::Pattern, "Menu referme le menu, même pendant le réglage");
-        f.feed({InputEvent::menu()});
-        CHECK(!f.ui.editing_quantize() && f.ui.menu_cursor() == 0, "le réglage ne survit pas à la fermeture du menu");
-
-        // File pleine : la valeur ne change pas.
-        f.feed({InputEvent::wheel(1), InputEvent::ok()});
-        f.sink.budget = 0;
-        f.feed({InputEvent::wheel(1)});
-        CHECK(f.ui.quantize(0) == 10, "file pleine : valeur inchangée");
     }
 
     // ----- Sauvegarde : les données de timing sont conservées -----

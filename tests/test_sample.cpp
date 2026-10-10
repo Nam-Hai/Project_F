@@ -144,17 +144,14 @@ int main() {
         std::string          err;
 
         CHECK(write_test_wav(path, 1, cfg::SAMPLE_RATE, src), "écriture du WAV de test");
-        CHECK(load_wav_mono16(path, loaded, err), "chargement d'un WAV valide");
+        CHECK(load_wav_mono(path, loaded, err), "chargement d'un WAV valide");
         CHECK(loaded == src, "données chargées identiques");
 
-        write_test_wav(path, 2, cfg::SAMPLE_RATE, src);
-        CHECK(!load_wav_mono16(path, loaded, err), "stéréo refusé");
+        write_test_wav(path, 1, 48000, src);
+        CHECK(!load_wav_mono(path, loaded, err), "48 kHz refusé");
         CHECK(err.find("afconvert") != std::string::npos, "message d'erreur avec la conversion");
 
-        write_test_wav(path, 1, 48000, src);
-        CHECK(!load_wav_mono16(path, loaded, err), "48 kHz refusé");
-
-        CHECK(!load_wav_mono16("fichier_inexistant.wav", loaded, err), "fichier absent refusé");
+        CHECK(!load_wav_mono("fichier_inexistant.wav", loaded, err), "fichier absent refusé");
         std::remove(path);
     }
 
@@ -194,7 +191,7 @@ int main() {
         const std::vector<int16_t> pcm = {10, 20, 30};
         write_test_wav((dir + "/snare.wav").c_str(), 1, cfg::SAMPLE_RATE, pcm);
         write_test_wav((dir + "/Kick.WAV").c_str(), 1, cfg::SAMPLE_RATE, pcm);
-        write_test_wav((dir + "/stereo.wav").c_str(), 2, cfg::SAMPLE_RATE, pcm);      // mauvais format
+        write_test_wav((dir + "/rate.wav").c_str(), 1, 48000, pcm);                  // mauvaise fréquence
         write_test_wav((dir + "/.cache.wav").c_str(), 1, cfg::SAMPLE_RATE, pcm);      // fichier caché
         std::FILE* f = std::fopen((dir + "/notes.txt").c_str(), "wb");               // pas un WAV
         std::fclose(f);
@@ -205,7 +202,7 @@ int main() {
         CHECK(lib.count() == 2 && std::string(lib.name(0)) == "Kick.WAV" && std::string(lib.name(1)) == "snare.wav",
               "bibliothèque : tri alphabétique insensible à la casse");
 
-        CHECK(lib.find("snare.wav") == 1 && lib.find("Kick.WAV") == 0 && lib.find("snare") == -1 && lib.find("stereo.wav") == -1,
+        CHECK(lib.find("snare.wav") == 1 && lib.find("Kick.WAV") == 0 && lib.find("snare") == -1 && lib.find("rate.wav") == -1,
               "bibliothèque : find retrouve un sample par son nom exact");
 
         const int16_t* data = nullptr;

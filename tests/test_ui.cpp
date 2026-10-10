@@ -369,18 +369,17 @@ int main() {
         ref.clear();
         ref.rect(0, 8, 128, 8, true);
         ref.text(0, 8, " Changer le sample", true);
-        ref.text(0, 16, " Quantifier 0%");
-        ref.text(0, 24, " Supprimer la piste");
-        ref.text(0, 32, " Annuler");
-        CHECK(same_rows(got, ref, 8, 40), "menu : quatre entrées, la première sélectionnée");
+        ref.text(0, 16, " Supprimer la piste");
+        ref.text(0, 24, " Annuler");
+        CHECK(same_rows(got, ref, 8, 32), "menu : trois entrées, la première sélectionnée");
 
         feed(ui, {InputEvent::wheel(5)});
-        CHECK(ui.menu_cursor() == 3, "menu : borne basse");
+        CHECK(ui.menu_cursor() == 2, "menu : borne basse");
         feed(ui, {InputEvent::wheel(-9)});
         CHECK(ui.menu_cursor() == 0, "menu : borne haute");
 
         // Annuler, Back et Menu rappuyé : retour à la liste, curseur inchangé, rien envoyé.
-        feed(ui, {InputEvent::wheel(3), InputEvent::ok()});
+        feed(ui, {InputEvent::wheel(2), InputEvent::ok()});
         CHECK(ui.view() == UiController::View::Tracks && ui.cursor() == 1 && sink.sent.empty(), "Annuler : retour à la liste");
         feed(ui, {InputEvent::menu(), InputEvent::back()});
         CHECK(ui.view() == UiController::View::Tracks && ui.cursor() == 1, "Back : retour à la liste");
@@ -396,7 +395,7 @@ int main() {
         CHECK(ui.view() == UiController::View::Menu, "Menu dans le pattern : menu de la piste");
         feed(ui, {InputEvent::back()});
         CHECK(ui.view() == UiController::View::Pattern, "Back : retour au pattern (vue d'origine)");
-        feed(ui, {InputEvent::menu(), InputEvent::wheel(3), InputEvent::ok()});
+        feed(ui, {InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok()});
         CHECK(ui.view() == UiController::View::Pattern && sink.sent.empty(), "Annuler : retour au pattern");
 
         // Dans la vue Ajout, pas de menu pour l'instant.
@@ -411,15 +410,15 @@ int main() {
         ui.add_track("Kick1.wav", 0, 0x0001);
         ui.add_track("Snare1.wav", 2, 0x0410);
 
-        feed(ui, {InputEvent::wheel(1), InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok()});
+        feed(ui, {InputEvent::wheel(1), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok()});
         CHECK(ui.view() == UiController::View::Menu && ui.confirming_delete() && sink.sent.empty(),
               "première validation : confirmation demandée, rien supprimé");
 
         Canvas got, ref;
         ui.render(got);
-        ref.rect(0, 24, 128, 8, true);
-        ref.text(0, 24, " Confirmer ?", true);
-        CHECK(same_rows(got, ref, 24, 32), "le libellé devient « Confirmer ? »");
+        ref.rect(0, 16, 128, 8, true);
+        ref.text(0, 16, " Confirmer ?", true);
+        CHECK(same_rows(got, ref, 16, 24), "le libellé devient « Confirmer ? »");
 
         feed(ui, {InputEvent::wheel(1), InputEvent::wheel(-1)});
         CHECK(!ui.confirming_delete(), "bouger la roue annule la confirmation");
@@ -428,7 +427,7 @@ int main() {
         feed(ui, {InputEvent::back()});
         CHECK(ui.view() == UiController::View::Tracks && !ui.confirming_delete() && sink.sent.empty(), "Back annule la confirmation");
 
-        feed(ui, {InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok(), InputEvent::ok()});
+        feed(ui, {InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
         CHECK(sink.sent.size() == 1 && sink.sent[0].type == Command::ClearTrack && sink.sent[0].track == 2,
               "seconde validation : ClearTrack sur la piste moteur 2");
         CHECK(ui.track_count() == 1 && ui.view() == UiController::View::Tracks && ui.cursor() == 1,
@@ -440,7 +439,7 @@ int main() {
         UiController  ui(sink);
         ui.add_track("Kick1.wav", 0, 0x0001);
         ui.add_track("Snare1.wav", 2, 0x0410);
-        feed(ui, {InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok(), InputEvent::ok()});
+        feed(ui, {InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
         CHECK(sink.sent.size() == 1 && sink.sent[0].track == 0, "suppression de la première piste : ClearTrack 0");
         CHECK(ui.track_count() == 1 && std::strcmp(ui.track_name(0), "Snare1") == 0 && ui.engine_track(0) == 2 &&
                   ui.pattern_bits(0) == 0x0410 && ui.cursor() == 0,
@@ -451,7 +450,7 @@ int main() {
         RecordingSink sink;
         UiController  ui(sink);
         ui.add_track("Kick1.wav", 0);
-        feed(ui, {InputEvent::ok(), InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok(), InputEvent::ok()});
+        feed(ui, {InputEvent::ok(), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
         CHECK(ui.track_count() == 0 && ui.view() == UiController::View::Tracks && ui.cursor() == 0,
               "suppression depuis le pattern : retour à la liste");
     }
@@ -459,7 +458,7 @@ int main() {
         RecordingSink sink;
         UiController  ui(sink);
         ui.add_track("Kick1.wav", 0);
-        feed(ui, {InputEvent::menu(), InputEvent::wheel(2), InputEvent::ok()});
+        feed(ui, {InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok()});
         sink.accept = false;  // file pleine au moment de confirmer
         feed(ui, {InputEvent::ok()});
         CHECK(ui.track_count() == 1 && ui.view() == UiController::View::Menu && ui.error_shown() && !ui.confirming_delete(),

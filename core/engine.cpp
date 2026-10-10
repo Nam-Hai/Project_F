@@ -20,9 +20,10 @@ void Engine::set_voice(int track, Voice* voice) {
     voices_[track] = voice;
 }
 
-void Engine::trigger(int track, float velocity, float pitch_ratio) {
+void Engine::trigger(int track, float velocity, float pitch_ratio, int pan) {
     if (track < 0 || track >= cfg::MAX_TRACKS || !voices_[track]) return;
-    voices_[track]->trigger_pitched(velocity, pitch_ratio);
+    // La balance de la note est une position entre celle de la piste et les extrémités.
+    voices_[track]->trigger_panned(velocity, pitch_ratio, dsp::combine_balance(track_balance_[track], pan));
     state_.triggers[track].fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -40,11 +41,17 @@ void Engine::release_sample(int track) {
 // Supprime une piste : plus de voix, sample rendu à l'UI, pattern / gain / pitch remis à zéro.
 void Engine::clear_track(int track) {
     voices_[track] = nullptr;
-    players_[track].set_sample(nullptr, 0);
+    players_[track].set_sample(nullptr, 0, 1);
     players_[track].set_pitch(1.0f);
     release_sample(track);
     gains_[track] = 1.0f;
+    players_[track].set_stereo_width(0);
+    track_balance_[track] = 0;
     seq_.pattern().reset_track(track);  // pas, vélocités et pitchs par défaut
+}
+
+static int clamp_pan(int pan) {
+    return pan < cfg::PAN_MIN ? cfg::PAN_MIN : pan > cfg::PAN_MAX ? cfg::PAN_MAX : pan;
 }
 
 void Engine::apply(const Command& c) {
@@ -72,7 +79,7 @@ void Engine::apply(const Command& c) {
             if (track_ok && c.data && c.length > 0) {
                 // L'ancien buffer n'est plus lu après set_sample ci-dessous (sauf si c'est le même).
                 if (track_sample_[c.track] != c.data) release_sample(c.track);
-                players_[c.track].set_sample(c.data, c.length);
+                players_[c.track].set_sample(c.data, c.length, c.channels);
                 track_sample_[c.track] = c.data;
                 voices_[c.track]       = &players_[c.track];
             }
@@ -99,6 +106,19 @@ void Engine::apply(const Command& c) {
                 seq_.pattern().pitch[c.track][c.step] = static_cast<int8_t>(v);
             }
             break;
+        case Command::SetTrackWidth: {
+            int v = static_cast<int>(std::lround(c.value));
+            if (v < cfg::WIDTH_MIN) v = cfg::WIDTH_MIN;
+            if (v > cfg::WIDTH_MAX) v = cfg::WIDTH_MAX;
+            if (track_ok) players_[c.track].set_stereo_width(v);
+            break;
+        }
+        case Command::SetTrackBalance:
+            if (track_ok) track_balance_[c.track] = static_cast<int8_t>(clamp_pan(static_cast<int>(std::lround(c.value))));
+            break;
+        case Command::SetStepPan:
+            if (track_ok && step_ok) seq_.pattern().pan[c.track][c.step] = static_cast<int8_t>(clamp_pan(static_cast<int>(std::lround(c.value))));
+            break;
         case Command::SetStepOffset:
             if (track_ok && step_ok) {
                 int v = static_cast<int>(std::lround(c.value));
@@ -119,6 +139,7 @@ void Engine::apply(const Command& c) {
                 if (o < cfg::OFFSET_MIN) o = cfg::OFFSET_MIN;
                 if (o > cfg::OFFSET_MAX) o = cfg::OFFSET_MAX;
                 Hit& h = seq_.pattern().extra[c.track][c.step][c.slot - 1];
+                h.pan      = static_cast<int8_t>(clamp_pan(c.pan));
                 h.offset   = static_cast<int8_t>(o);
                 h.velocity = static_cast<uint8_t>(v);
                 h.pitch    = static_cast<int8_t>(p);
@@ -152,8 +173,9 @@ void Engine::apply(const Command& c) {
                 int p = c.pitch;
                 if (p < cfg::STEP_PITCH_MIN) p = cfg::STEP_PITCH_MIN;
                 if (p > cfg::STEP_PITCH_MAX) p = cfg::STEP_PITCH_MAX;
-                trigger(c.track, static_cast<float>(v) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(p));
-                if (phase_ != Phase::Idle && c.track == record_track_) record_note(v, p);
+                const int pan = clamp_pan(c.pan);
+                trigger(c.track, static_cast<float>(v) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(p), pan);
+                if (phase_ != Phase::Idle && c.track == record_track_) record_note(v, p, pan);
             }
             break;
         case Command::ClearTrack:
@@ -165,13 +187,13 @@ void Engine::apply(const Command& c) {
         case Command::PreviewSample:
             if (c.data && c.length > 0) {
                 if (preview_sample_ != c.data) release_pointer(preview_sample_);
-                preview_.set_sample(c.data, c.length);
+                preview_.set_sample(c.data, c.length, c.channels);
                 preview_.trigger(1.0f);
                 preview_sample_ = c.data;
             }
             break;
         case Command::StopPreview:
-            preview_.set_sample(nullptr, 0);  // plus aucune lecture du buffer
+            preview_.set_sample(nullptr, 0, 1);  // plus aucune lecture du buffer
             release_pointer(preview_sample_);
             break;
         case Command::Play:
@@ -217,12 +239,12 @@ void Engine::apply(const Command& c) {
 void Engine::play_step(int track, int step) {
     const Pattern& p = seq_.pattern();
     trigger(track, static_cast<float>(p.velocity[track][step]) / static_cast<float>(cfg::VELOCITY_MAX),
-            dsp::semitone_ratio(p.pitch[track][step]));
+            dsp::semitone_ratio(p.pitch[track][step]), p.pan[track][step]);
 }
 
 // Programme une note à `countdown` échantillons (mesuré depuis l'échantillon courant). Si le tableau est
 // plein (ce qui ne devrait pas arriver), la note est abandonnée : aucune allocation dans le callback audio.
-void Engine::schedule(double countdown, int track, int step, int velocity, int pitch) {
+void Engine::schedule(double countdown, int track, int step, int velocity, int pitch, int pan) {
     if (pending_count_ >= MAX_PENDING) return;
     Pending& p = pending_[pending_count_++];
     p.countdown = countdown;
@@ -230,6 +252,7 @@ void Engine::schedule(double countdown, int track, int step, int velocity, int p
     p.step      = static_cast<uint8_t>(step);
     p.velocity  = static_cast<uint8_t>(velocity);
     p.pitch     = static_cast<int8_t>(pitch);
+    p.pan       = static_cast<int8_t>(pan);
 }
 
 // Joue les notes en attente dont l'heure est venue.
@@ -238,7 +261,7 @@ void Engine::fire_pending() {
     for (int i = 0; i < pending_count_; ++i) {
         const Pending p = pending_[i];
         if (p.countdown <= 0.0) {
-            trigger(p.track, static_cast<float>(p.velocity) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(p.pitch));
+            trigger(p.track, static_cast<float>(p.velocity) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(p.pitch), p.pan);
         } else {
             pending_[kept++] = p;
         }
@@ -294,12 +317,13 @@ void Engine::fire_step() {
                 const int off = h == 0 ? pat.offset[t][step] : pat.extra[t][step][h - 1].offset;
                 const int vel = h == 0 ? pat.velocity[t][step] : pat.extra[t][step][h - 1].velocity;
                 const int pit = h == 0 ? pat.pitch[t][step] : pat.extra[t][step][h - 1].pitch;
+                const int pan = h == 0 ? pat.pan[t][step] : pat.extra[t][step][h - 1].pan;
 
                 const double shift = static_cast<double>(off) * keep;  // en 1/128 de pas, signe conservé
                 if (shift == 0.0 || (shift < 0.0 && just_started_ && step == 0)) {
-                    trigger(t, static_cast<float>(vel) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(pit));
+                    trigger(t, static_cast<float>(vel) / static_cast<float>(cfg::VELOCITY_MAX), dsp::semitone_ratio(pit), pan);
                 } else if (shift > 0.0) {
-                    schedule(lateness + shift / cfg::OFFSET_UNITS * length, t, step, vel, pit);
+                    schedule(lateness + shift / cfg::OFFSET_UNITS * length, t, step, vel, pit, pan);
                 }
                 // décalage négatif : déjà programmé à la frontière précédente
             }
@@ -314,7 +338,8 @@ void Engine::fire_step() {
                 if (shift >= 0.0) continue;
                 const int vel = h == 0 ? pat.velocity[t][next] : pat.extra[t][next][h - 1].velocity;
                 const int pit = h == 0 ? pat.pitch[t][next] : pat.extra[t][next][h - 1].pitch;
-                schedule(lateness + length + shift / cfg::OFFSET_UNITS * length, t, next, vel, pit);
+                const int pan = h == 0 ? pat.pan[t][next] : pat.extra[t][next][h - 1].pan;
+                schedule(lateness + length + shift / cfg::OFFSET_UNITS * length, t, next, vel, pit, pan);
             }
         }
     }
@@ -333,6 +358,7 @@ void Engine::start_record(int track) {
     take_steps_   = 0;
     early_count_  = 0;
     for (bool& t : touched_) t = false;
+    seq_.pattern().clear_steps(track);  // une prise repart d'une piste vide (la quantification de la piste est conservée)
     seq_.play();  // depuis le début : le pré-compte occupe un tour
     pending_count_ = 0;
     just_started_  = false;
@@ -350,7 +376,7 @@ void Engine::end_record() {
 
 // Une frappe pendant le pré-compte ou la prise : on la date par rapport à la grille. Elle a déjà sonné (le
 // moteur la joue tout de suite), donc le pattern la reçoit pour les tours suivants.
-void Engine::record_note(int velocity, int pitch) {
+void Engine::record_note(int velocity, int pitch, int pan) {
     if (!seq_.playing()) return;
     while (seq_.due()) fire_step();  // les pas dus à cet instant sont d'abord tirés : la position est sans ambiguïté
     if (phase_ == Phase::Idle) return;
@@ -368,6 +394,7 @@ void Engine::record_note(int velocity, int pitch) {
     hit.offset   = static_cast<int8_t>(off);
     hit.velocity = static_cast<uint8_t>(velocity);
     hit.pitch    = static_cast<int8_t>(pitch);
+    hit.pan      = static_cast<int8_t>(pan);
 
     if (phase_ == Phase::Precount) {
         // Seule la fin du dernier pas du pré-compte compte : une frappe juste avant le premier pas.
@@ -394,6 +421,7 @@ void Engine::record_hit(int step, const Hit& hit) {
         pat.offset[t][step]   = hit.offset;
         pat.velocity[t][step] = hit.velocity;
         pat.pitch[t][step]    = hit.pitch;
+        pat.pan[t][step]      = hit.pan;
         pat.extra_count[t][step] = 0;
         for (Hit& h : pat.extra[t][step]) h = Hit{};
         // Les anciennes notes de ce pas encore en attente ne doivent plus sonner (la nouvelle a déjà sonné).
@@ -418,6 +446,7 @@ void Engine::record_hit(int step, const Hit& hit) {
             pat.offset[t][step]   = hit.offset;
             pat.velocity[t][step] = hit.velocity;
             pat.pitch[t][step]    = hit.pitch;
+            pat.pan[t][step]      = hit.pan;
         } else {
             pat.extra[t][step][best - 1] = hit;
         }
@@ -433,7 +462,7 @@ void Engine::send_step_event(int step) {
     ev.track       = static_cast<uint8_t>(t);
     ev.step        = static_cast<uint8_t>(step);
     ev.extra_count = pat.extra_count[t][step];
-    ev.main        = Hit{pat.offset[t][step], pat.velocity[t][step], pat.pitch[t][step]};
+    ev.main        = Hit{pat.offset[t][step], pat.velocity[t][step], pat.pitch[t][step], pat.pan[t][step]};
     for (int n = 0; n < cfg::MAX_EXTRA_HITS; ++n) ev.extra[n] = pat.extra[t][step][n];
     if (!step_events_.push(ev)) state_.record_lost.fetch_add(1, std::memory_order_relaxed);
 }
@@ -472,24 +501,39 @@ void Engine::render_audio(float* left, float* right, int frames) {
 }
 
 void Engine::render_block(float* left, float* right, int frames) {
-    for (int i = 0; i < frames; ++i) left[i] = 0.0f;
+    for (int i = 0; i < frames; ++i) {
+        left[i]  = 0.0f;
+        right[i] = 0.0f;
+    }
 
     for (int t = 0; t < cfg::MAX_TRACKS; ++t) {
         if (!voices_[t]) continue;
-        for (int i = 0; i < frames; ++i) scratch_[i] = 0.0f;
-        voices_[t]->render(scratch_, frames);
+        for (int i = 0; i < frames; ++i) {
+            scratch_[i]       = 0.0f;
+            scratch_right_[i] = 0.0f;
+        }
+        voices_[t]->render_stereo(scratch_, scratch_right_, frames);
         mixer::accumulate(left, scratch_, frames, gains_[t]);
+        mixer::accumulate(right, scratch_right_, frames, gains_[t]);
     }
 
     if (preview_.active()) {
-        for (int i = 0; i < frames; ++i) scratch_[i] = 0.0f;
-        preview_.render(scratch_, frames);
+        for (int i = 0; i < frames; ++i) {
+            scratch_[i]       = 0.0f;
+            scratch_right_[i] = 0.0f;
+        }
+        preview_.render_stereo(scratch_, scratch_right_, frames);
         mixer::accumulate(left, scratch_, frames, 1.0f);
+        mixer::accumulate(right, scratch_right_, frames, 1.0f);
     }
 
-    if (click_.active()) click_.render(left, frames);
+    if (click_.active()) {  // le clic du pré-compte est au centre
+        for (int i = 0; i < frames; ++i) scratch_[i] = 0.0f;
+        click_.render(scratch_, frames);
+        mixer::accumulate(left, scratch_, frames, 1.0f);
+        mixer::accumulate(right, scratch_, frames, 1.0f);
+    }
 
     mixer::master(left, frames, cfg::MASTER_GAIN);
-
-    for (int i = 0; i < frames; ++i) right[i] = left[i];
+    mixer::master(right, frames, cfg::MASTER_GAIN);
 }

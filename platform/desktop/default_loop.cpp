@@ -37,6 +37,7 @@ bool load_default_loop(CommandSink& sink, SampleBank& bank, UiController* ui) {
         sample_cmd.track  = track;
         sample_cmd.data   = data;
         sample_cmd.length = length;
+        sample_cmd.channels = static_cast<uint8_t>(bank.channels(data));
         send_command(sink, sample_cmd);
 
         send_command(sink, {Command::SetTrackPitch, track, 0, setup.pitch});

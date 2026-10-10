@@ -41,7 +41,7 @@ JSON standard, produit par la machine, lisible et modifiable à la main (pas de 
 * **Écriture sécurisée** (à faire avec le stockage) : écrire dans un fichier temporaire, puis le renommer, pour qu'une coupure de courant ne détruise pas le profil.
 * **jsmn** (MIT, un seul en-tête, `third_party/jsmn/`) : tokenizer sans allocation, mode strict. Il ne vérifie pas les virgules ni les deux-points : notre couche de lecture contrôle donc la structure et borne tous ses accès. Profil plein (32 loops x 16 pistes) : environ 45 Ko de JSON et environ 115 Ko de RAM pendant la lecture (7168 jetons, dimensionnés pour le pire cas avec les listes de vélocité et de pitch par pas : voir `plan_step_params.md`).
 * **Nombres** lus et écrits indépendamment de la langue du système (jamais de virgule décimale).
-* **Limites** (tableaux fixes) : 32 loops, 64 samples dans la table, 16 pistes par loop, noms de sample de 47 caractères, nom de profil de 23.
+* **Limites** (tableaux fixes) : **12 loops** (réduit de 32 le 10/10/2026 pour économiser la mémoire : voir plan_record.md),  64 samples dans la table, 16 pistes par loop, noms de sample de 47 caractères, nom de profil de 23.
 
 ## 3. Interface (écran 128x64)
 

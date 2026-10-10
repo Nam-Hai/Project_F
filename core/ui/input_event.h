@@ -12,7 +12,8 @@ struct InputEvent {
         Menu,    // bouton Menu : ouvre le menu contextuel de la vue courante
         Mode,    // bouton Mode : vue Pattern, passe au mode suivant (Edit, Velocity, Pitch)
         Play,    // bouton Play/Stop
-        Step,    // index : bouton de pas 0..15
+        Step,    // index : bouton de pas 0..15 (touche blanche du clavier dans la vue Clavier)
+        Black,   // index : touche noire 0..9 (la première ouvre la vue Clavier ; les autres jouent dans la vue Clavier)
         PotBpm,  // value : position du potard, 0..1
     };
 
@@ -27,6 +28,7 @@ struct InputEvent {
     static InputEvent menu() { return {Menu, 0, 0, 0.0f}; }
     static InputEvent mode() { return {Mode, 0, 0, 0.0f}; }
     static InputEvent play() { return {Play, 0, 0, 0.0f}; }
+    static InputEvent black(int index) { return {Black, 0, static_cast<uint8_t>(index), 0.0f}; }
     static InputEvent step(int index) { return {Step, 0, static_cast<uint8_t>(index), 0.0f}; }
     static InputEvent pot_bpm(float value) { return {PotBpm, 0, 0, value}; }
 };

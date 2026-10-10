@@ -72,4 +72,27 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 | Condensateurs | $10\ \mu\text{F}$ Electrolytique / $2,2\text{ nF}$ Céramique | 2 de chaque | Découplage DC et filtrage passe-bas |
 | Résistances | $1\text{ k}\Omega$, $10\text{ k}\Omega$, $100\text{ k}\Omega$ | 4 à 8 | Atténuation et polarisation AOP |
 | Connecteurs | Embase Jack $6.35\text{ mm}$ ou $3.5\text{ mm}$ Stéréo | 1 | Sortie audio physique |
-| Carte MicroSD | Class 10 (16 Go ou 32 Go) | 1 | Stockage des kits de percussions WAV |
+| Carte MicroSD | Class 10 (16 Go ou 32 Go) | 1 | Stockage des kits de percussions WAV et du profil de loops |
+| Écran | OLED monochrome 128x64 (SSD1306, I2C ou SPI) | 1 | Affichage de l'interface |
+| Encodeur rotatif | Encodeur incrémental (« roue », avec ou sans poussoir) | 1 | Navigation dans les listes, réglage des valeurs |
+| Boutons de pas / touches blanches | Boutons-poussoirs alignés | 16 | 16 pas du pattern ; touches blanches du clavier de piano |
+| Boutons de touches noires | Boutons-poussoirs, placés au-dessus des blancs et décalés | 10 | Touches noires du clavier de piano (la première ouvre le clavier) |
+| Boutons de commande | Boutons-poussoirs | 5 | Valider, Back, Menu, Mode, Play/Stop |
+| Potentiomètre BPM | $10\text{ k}\Omega$ linéaire | 1 | Tempo |
+
+---
+
+## 5. Interface utilisateur : contrôles prévus
+
+| Contrôle | Quantité | Rôle |
+| :--- | :--- | :--- |
+| Roue (encodeur rotatif) | 1 | Défilement des listes, réglage des valeurs |
+| Boutons Valider, Back, Menu, Mode, Play/Stop | 5 | Navigation et transport |
+| Potentiomètre BPM | 1 | Tempo |
+| Boutons de pas | 16 | Pattern ; **touches blanches** du clavier (les 14 premières jouent, les 2 dernières sont inactives en mode clavier) |
+| Boutons de touches noires | 10 | Clavier ; la **première** sert aussi à entrer dans le mode clavier |
+
+* **Total : 31 boutons-poussoirs**, une roue, un potard, un écran OLED. Les boutons de pas n'ont **pas de LED** dans la première version (le retour passe par l'écran).
+* **Disposition du clavier** : les 10 boutons noirs sont au-dessus des 16 boutons de pas, décalés entre deux blanches comme sur un piano (voir `plan_keyboard.md`).
+* **Câblage** : 31 boutons, c'est assez pour envisager soit un câblage direct, soit une **matrice de boutons** ; le choix, avec le décompte des broches libres de la Teensy 4.1 (I2S, écran, encodeur, potard, SD déjà pris), est à faire lors de la conception.
+* **Étiquette** : une inscription près de la première touche noire (« Clavier ») est utile, puisque ce raccourci n'a pas de ligne de menu.

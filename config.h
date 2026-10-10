@@ -17,4 +17,12 @@ constexpr int   VELOCITY_MAX     = 127;  // valeur par défaut : le volume d'ava
 constexpr int   STEP_PITCH_MIN   = -12;
 constexpr int   STEP_PITCH_MAX   = 12;
 
+// Micro-timing : décalage d'une note par rapport à son pas, en 1/128 de pas (-64..63 = -50 % à +50 %),
+// jusqu'à 4 notes par pas (la note principale et 3 supplémentaires), force de quantification 0..100 %.
+constexpr int   OFFSET_MIN       = -64;
+constexpr int   OFFSET_MAX       = 63;
+constexpr int   OFFSET_UNITS     = 128;
+constexpr int   MAX_EXTRA_HITS   = 3;
+constexpr int   QUANTIZE_MAX     = 100;
+
 }  // namespace cfg

@@ -153,17 +153,24 @@ Project_F/
 * [x] File de commandes (`SetBpm`, `SetStep`, `ToggleStep`, `SetTrackGain`, `Play`, `Stop`, `Trigger`).
 * [ ] Swing, vélocité par pas, longueur de pattern variable.
 
-### Phase 6 : Interface Utilisateur (deux vues)
+### Phase 6 : Interface Utilisateur (deux vues) : FAIT sur PC
 L'UI est séparée en **logique portable** (`core/ui/`) et **deux vues** sur PC :
 
-* **Vue « écran »** : l'interface qui s'affichera réellement sur le petit écran du Teensy (sélection de samples, BPM, pistes, pas courant). Elle dessine dans une abstraction de framebuffer (`Canvas`) : fenêtre sur PC, SSD1306/ST7789 sur Teensy.
-* **Vue « matériel simulé »** (PC uniquement) : un faux panneau avec boutons, sliders et potards qui émule le hardware en attendant de le recevoir. Il produit des `InputEvent`.
+* **Vue « écran »** : l'interface qui s'affichera réellement sur le petit écran du Teensy (pistes, pattern, samples, loops, menus). Elle dessine dans une abstraction de framebuffer (`Canvas`, OLED 128x64 monochrome) ; sur Teensy, un pilote SSD1306 enverra le même buffer.
+* **Vue « matériel simulé »** (PC uniquement) : un faux panneau avec boutons, roue et potard qui émule le hardware en attendant de le recevoir. Il produit des `InputEvent`.
 
 Flux : `InputEvent` (bouton, encodeur, potard) -> `UiController` -> `Command` -> moteur ; `EngineState` -> `UiController` -> `Canvas`.
 
-* [ ] Définir `InputEvent` (bouton pressé, encodeur tourné, potard modifié) et les identifiants de contrôles.
-* [ ] `UiController` portable : pages, curseur, sélection, génération des `Command`.
-* [ ] `Canvas` + vue écran (résolution et type d'écran à choisir).
-* [ ] Émulateur PC : fenêtre affichant le `Canvas` et le panneau de contrôles simulés.
-* [ ] Côté Teensy : lecture des boutons / encodeurs / potards (anti-rebond), pilote d'écran, mêmes `InputEvent`.
+* [x] `InputEvent` (roue, Valider, Back, Menu, Mode, Play, pas, potard BPM) et `UiController` portable (pistes, pattern, samples, loops, menus, modes Edit / Velocity / Pitch).
+* [x] `Canvas` 128x64 et émulateur PC (Dear ImGui + SDL2). Détails : `plan_ui.md`.
+* [x] Sauvegarde des loops dans un profil (format JSON) : `plan_loops.md`.
+* [x] Vélocité et pitch par pas : `plan_step_params.md`.
+* [ ] Côté Teensy : lecture des boutons / encodeur / potard (anti-rebond), pilote d'écran, mêmes `InputEvent`.
 * [ ] Finaliser l'étage de sortie analogique sur PCB ou carte à trous.
+
+### Phase 7 : Clavier de piano (24 + 2 touches) : PLANIFIÉ
+Jouer l'échantillon d'une piste à des hauteurs différentes sur un clavier (16 touches blanches = les 16 boutons de pas, 10 touches noires en plus), avec retour sonore immédiat. Entrée par la première touche noire. Voir `plan_keyboard.md`.
+
+### Phase 8 : Jeu « humain » et enregistrement à la main : PLANIFIÉ
+* **Partie A, micro-timing** : décalage des notes par rapport à la grille (±50 % d'un pas), roulements (4 notes par pas), force de quantification par piste, mode T. Voir `plan_record.md`.
+* **Partie B, enregistrement** : pré-compte, frappes datées par le moteur avec compensation de latence, prise dans la vue Clavier. Dépend des phases 7 et 8A.

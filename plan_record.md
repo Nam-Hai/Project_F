@@ -1,0 +1,95 @@
+# Plan : jeu « humain » et enregistrement à la main
+
+Objectif : jouer un rythme à la main, en tapant en direct, et **conserver le jeu** : chaque note garde l'instant exact où elle a été jouée, y compris les roulements rapides. Pas de quantification forcée sur la grille.
+
+**Cette fonctionnalité se découpe en deux parties, après le clavier :**
+
+```
+ Clavier (plan_keyboard.md)  ──┐
+                               ├──►  Partie B : enregistrement
+ Partie A : micro-timing     ──┘
+```
+* **Le clavier de piano** (24 + 2 touches) est une fonctionnalité à part : `plan_keyboard.md`. L'enregistrement se fait dans sa vue.
+* **Partie A : micro-timing.** Les notes peuvent avoir un décalage par rapport à la grille, plusieurs notes par pas, une force de quantification par piste ; on règle les décalages à la main (mode T). Utile seule, indépendante du clavier.
+* **Partie B : enregistrement.** Pré-compte, datation des frappes, prise. Dépend du clavier et de la partie A.
+
+Ordre conseillé : **clavier, puis partie A, puis partie B.**
+
+## 1. Décisions
+
+* **Option A : décalage par note, autour du pas.** La grille de 16 pas reste. Chaque note est rattachée au pas le plus proche et garde un **décalage de -50 % à +50 % d'un pas** (128 graduations, environ 1 ms à 120 BPM). Le décalage est une fraction de pas : le groove suit le tempo. Le pattern est circulaire : une note du pas 0 en avance sonne à la fin du tour précédent. Seul le tout premier tour, au démarrage de la lecture, n'a pas de « tour précédent » : une note du pas 0 de décalage négatif y est jouée à l'instant 0.
+* **Roulements : jusqu'à 4 notes par pas et par piste** (de quoi faire des quadruples croches), chacune avec son décalage, sa vélocité et son pitch. Un pas est « joué » s'il porte au moins une note ; éteint puis rallumé en Edit, il retrouve ses notes.
+* **Les modes V, P et T agissent sur toutes les notes d'un pas ensemble** dans cette première version (vélocité et pitch en bloc, décalage ajouté à chaque note). L'enregistrement, lui, conserve chaque note telle que jouée. Régler une note de roulement individuellement viendra plus tard.
+* **Nouveau mode T (Timing)** dans le cycle du bouton Mode : Edit -> Velocity -> Pitch -> **Timing** -> Edit. Lettres de l'en-tête : `E V P T`. Jauge du pas sélectionné centrée sur 0 (comme le pitch), valeur en pourcentage de pas.
+* **Force de quantification par piste (0 à 100 %)**, réglée dans le **menu de la piste** (nouvelle ligne « Quantifier », valeur changée à la roue). Décalage joué = décalage enregistré x (100 - force) / 100 : 0 % = comme joué (défaut), 100 % = pile sur la grille. Non destructif : les décalages restent mémorisés.
+* **L'enregistrement se fait dans la vue Clavier** (ouverte avec la première touche noire : voir `plan_keyboard.md`), qui reste un instrument de jeu libre tant qu'on n'a pas lancé la prise. **Play** lance le **pré-compte** (une mesure de clics) puis l'enregistrement.
+* **Pré-compte seul** *(interprétation de la réponse de l'utilisateur : pas de métronome pendant la prise ; un métronome continu pourra être un réglage plus tard)*.
+* **Vélocité de la frappe : fixe à 127** (les boutons n'ont pas de force de frappe) ; elle se règle ensuite avec le mode V.
+* **Annuler la prise** : l'UI garde une copie de la piste à l'ouverture de la vue Clavier ; un élément du menu de cette vue la restaure.
+* **Plus tard** : depuis la vue **Pistes**, un mode « 16 pads » où chaque bouton joue une piste différente (kit joué d'une main).
+
+## 2. Moteur (`core/`)
+
+### Données
+* Par pas et par piste, la note principale garde `velocity`, `pitch` (déjà en place) et gagne un `offset` (-64..63, en 1/128 de pas). Jusqu'à 3 notes supplémentaires par pas : `{offset, velocity, pitch}`.
+* Un pas allumé sans note supplémentaire ni décalage joue exactement comme aujourd'hui : **tous les patterns, tests et fichiers existants restent valides**.
+* Par piste : `quantize` (0..100).
+
+### Séquenceur : notes en attente
+Aujourd'hui tout part aux frontières de pas. Il faut en plus une **liste de notes en attente** (tableau fixe, 16 pistes x 4 notes x 2 pas = 128 entrées), chacune avec un compte à rebours en échantillons.
+* À la frontière du pas *k* : on programme les notes du pas *k* de décalage >= 0 (retardées de `décalage x durée du pas`) et les notes du pas *k+1* de décalage < 0 (déclenchées `durée du pas + décalage` plus tard, donc *avant* la frontière suivante).
+* Le rendu est découpé à la fois aux frontières de pas et aux échéances des notes en attente : **précision à l'échantillon conservée**.
+* Le décalage appliqué est le décalage enregistré réduit par la force de quantification de la piste.
+* Au démarrage de la lecture : les notes du pas 0 de décalage négatif partent à l'instant 0. À l'arrêt : la liste est vidée. Un changement de tempo n'affecte pas les notes déjà programmées.
+
+### Enregistrement (partie B)
+* **Commandes** : démarrer / arrêter l'enregistrement d'une piste (toujours avec pré-compte), réglage de la compensation de latence, plus les commandes nécessaires pour poser une note, son décalage, effacer les notes d'un pas, et régler la force de quantification d'une piste (utilisées aussi au chargement d'une loop). La commande `Note(piste, vélocité, pitch)` vient du clavier.
+* **`Note` fait toujours sonner la note tout de suite** (jeu libre, pré-compte, prise) ; **le moteur ne l'enregistre que pendant la phase d'enregistrement**, donc l'UI envoie la même commande dans tous les cas. **Datation par le moteur** : à l'arrivée d'un `Note` pendant l'enregistrement, il connaît sa position exacte dans le pas (compte à rebours de la frontière), lui soustrait la **compensation de latence**, trouve le pas le plus proche et calcule le décalage. La note enregistrée ne sonne qu'au tour suivant, donc **pas de double coup**.
+* **Règle de prise** : la première frappe dans un pas, pendant un tour, **remplace** les notes précédentes de ce pas ; les frappes suivantes dans le même pas, pendant le même tour, s'ajoutent (roulement, jusqu'à 4 ; au-delà, la plus proche en temps est remplacée). Les pas non touchés ne changent pas : on peut construire un pattern en plusieurs tours.
+* **Retour vers l'UI** : une seconde file moteur -> UI porte l'état complet du pas modifié (piste, pas, notes) : l'UI écrase son modèle sans refaire la logique. Un compteur de pertes dans l'état du moteur signale une file saturée.
+* **Pré-compte** : une petite voix de clic synthétique (pas de sample), sur la sortie principale. Pendant le pré-compte, les pistes se taisent, seuls les clics sonnent (les touches du clavier sonnent toujours, sans enregistrer). L'état du moteur publie la phase (repos, pré-compte, enregistrement) et le temps courant du pré-compte. **Le pré-compte est toujours joué** ; si la lecture tournait, elle repart du début.
+* **Compensation de latence** : décalage constant (en ms) retiré à chaque frappe. Sans elle, l'écart entre ce qu'on entend et l'horloge interne serait enregistré dans le groove et la piste sonnerait en retard sur les autres. Valeur par défaut raisonnable selon la plateforme ; réglable dans l'émulateur ; sur Teensy la latence est faible.
+
+## 3. Format de sauvegarde (JSON, version 1 inchangée)
+Les clés existantes (`velocity`, `step_pitch`) restent. Ajouts facultatifs par piste, **écrits seulement hors valeurs par défaut** :
+* `"hits"` : liste de notes sous forme de chaîne, une entrée par note qui n'est pas la note principale à décalage 0, de la forme `pas/décalage/vélocité/pitch` (le décalage de la note principale d'un pas y figure aussi quand il n'est pas nul).
+* `"quantize"` : entier de 0 à 100.
+Valeurs invalides : `BadField`. Anciens fichiers : valeurs par défaut.
+**Coût à surveiller** : quelques jetons de plus par piste ; le tableau de jetons de jsmn (115 Ko) devra grandir (environ 150 Ko) ou le format être regroupé. À décider à l'étape A2.
+
+## 4. Interface (`core/ui/`)
+* **Mode T** (partie A) : jauge centrée de -50 % à +49 %, la roue règle le décalage du pas sélectionné (toutes ses notes).
+* **Boîtes** (partie A) : un pas de décalage non nul est dessiné légèrement décalé à gauche ou à droite dans sa case (jusqu'à 3 pixels), pour voir le groove d'un coup d'œil ; un pas à plusieurs notes affiche de petits points.
+* **Menu de la piste** : la ligne « Quantifier » (Valider entre dans le réglage, la roue change la valeur par pas de 5 %, Valider confirme).
+* **Vue Clavier avec enregistrement** (partie B) :
+  * À l'ouverture : jeu libre, rien ne démarre (voir `plan_keyboard.md`).
+  * **Play** lance le pré-compte puis l'enregistrement ; Play de nouveau arrête la prise (elle est conservée), on retrouve le jeu libre.
+  * Écran : au clavier dessiné s'ajoutent **une rangée de 16 petites cases = le temps** (case de lecture qui avance, pas enregistrés marqués), le décompte (« 4 3 2 1 ») pendant le pré-compte et un indicateur « REC » pendant la prise. *(Proposition à affiner sur l'émulateur.)*
+  * **Menu** dans la vue : « Annuler la prise » (restaure la piste telle qu'elle était à l'ouverture) et « Annuler ».
+* **Émulateur** : un curseur de compensation de latence.
+
+## 5. Étapes
+### Partie A : micro-timing (indépendante du clavier)
+**A1. Moteur : décalages, notes multiples, séquenceur à notes en attente.** Commandes, données, force de quantification, sans enregistrement. Tests à l'échantillon près : décalage positif et négatif, passage du pas 15 au pas 0, premier tour, plusieurs notes dans un pas, force de quantification, arrêt, changement de tempo en cours de tour, tableau de notes en attente plein, patterns existants inchangés.
+**A2. Profil et format** : décalages, notes supplémentaires, force de quantification, taille du tableau de jetons ; tests (aller-retour, invalides, profil plein, fichiers abîmés au hasard, sanitizers).
+**A3. UI : modèle, mode T, affichage, « Quantifier ».** Notes dans le modèle, chargement des loops avec ces données, jauge du timing, modes V, P et T sur toutes les notes d'un pas, affichage décalé des boîtes, ligne « Quantifier » du menu de piste. Tests, puis essais sur l'émulateur.
+
+*À la fin de la partie A, on peut déjà donner du groove à la main (décalages, force de quantification), sans enregistrer.*
+
+### Partie B : enregistrement (après le clavier et la partie A)
+**B1. Moteur : enregistrement.** Clic de pré-compte, phases, `Note` datée avec compensation de latence, règle de prise, file de retour vers l'UI, compteur de pertes. Tests déterministes : frappes simulées à des positions précises (jeu libre sans enregistrement, pendant le pré-compte, juste avant / après une frontière, au bouclage, roulement de 4 notes, pas déjà occupé, plusieurs tours, latence compensée, lecture arrêtée, file de retour pleine).
+**B2. UI : enregistrement dans la vue Clavier.** Play lance le pré-compte puis la prise, rangée du temps, décompte, indicateur REC, mise à jour du modèle par les événements, annulation de la prise. Tests.
+**B3. Émulateur et essais** : curseur de latence ; essais d'écoute et retouches (compensation par défaut, lisibilité des décalages).
+
+### Plus tard
+Mode 16 pads depuis la vue Pistes, calibrage automatique de la latence (taper sur un clic), métronome continu en réglage, swing, réglage d'une note de roulement individuelle, pads sensibles à la vélocité sur le matériel.
+
+## 6. Limites assumées
+* 4 notes par pas et par piste : en dessous d'une quadruple croche à 120 BPM, deux frappes très rapprochées se confondent.
+* Les frappes sont rattachées à une grille de 16 pas : pas de mesure de plus de 16 pas ni de triolets exacts (un triolet est enregistré avec ses décalages réels, donc il sonne, mais il n'est pas lisible comme un triolet à l'écran).
+* Pas de force de frappe : toute touche joue à la vélocité 127 ; elle se règle ensuite note par note avec le mode V.
+* La compensation de latence est un réglage global ; il n'y a pas encore de calibrage automatique.
+
+## 7. Décisions validées et points restants
+**Validé** : option A (décalage ±50 % par note), 4 notes par pas, modes V, P et T sur toutes les notes d'un pas, force de quantification par piste dans le menu de la piste, pré-compte seul (pas de métronome pendant la prise), **Play lance toujours le pré-compte puis la prise** (la lecture en cours repart du début), vélocité fixe à 127, enregistrement dans la vue Clavier, annulation de la prise, découpage en clavier, partie A puis partie B.
+**Reste à régler** : la **valeur par défaut de la compensation de latence** (à mesurer sur la machine de développement, puis sur Teensy), et la taille du tableau de jetons du format (étape A2).

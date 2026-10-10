@@ -28,11 +28,13 @@
 //             est joué en écoute après un court délai
 //   Menu    - menu contextuel (voir MenuKind)
 //   Loops   - la liste des loops du profil, puis « + Nouvelle loop »
+//   Keyboard - clavier de piano : les boutons jouent la piste à différents pitchs (voir keyboard_layout.h).
+//             On y entre avec la première touche noire, depuis la vue Pistes ou Pattern.
 //
 // Le bouton Menu ouvre le menu de la vue courante ; Back (ou Menu de nouveau) le referme.
 class UiController {
 public:
-    enum class View : uint8_t { Tracks, Pattern, Add, Menu, Loops };
+    enum class View : uint8_t { Tracks, Pattern, Add, Menu, Loops, Keyboard };
     enum class MenuKind : uint8_t { Track, Loop, LoopItem };
     enum class EditMode : uint8_t { Edit, Velocity, Pitch };
 
@@ -43,6 +45,7 @@ public:
     static constexpr uint32_t LIT_MS            = 120;   // durée de l'indicateur de jeu d'une piste
     static constexpr uint32_t ERROR_MS          = 2000;  // durée des messages
     static constexpr uint32_t PREVIEW_DELAY_MS  = 150;   // la roue doit s'arrêter avant l'écoute
+    static constexpr int      KEYBOARD_VELOCITY  = 127;    // les boutons n'ont pas de force de frappe
     static constexpr int      VELOCITY_PER_NOTCH = 4;    // vélocité : 4 points par cran de roue
     static constexpr uint32_t AUDITION_MIN_MS    = 60;   // une note d'essai au plus toutes les 60 ms
 
@@ -83,6 +86,7 @@ public:
     bool     confirming() const { return confirm_; }
     bool     confirming_delete() const { return confirm_; }
     int      selected_track() const { return selected_; }
+    int      keyboard_track() const { return selected_; }  // la piste jouée dans la vue Clavier
     int      selected_step() const { return step_cursor_; }
     int      bpm() const { return bpm_; }
     bool     playing() const { return playing_; }
@@ -138,6 +142,10 @@ private:
     void adjust_step_value(int delta);
     void audition_selected_step();
     void on_play();
+    void on_black(int index);
+    void on_white_key(int index);
+    void enter_keyboard(int track);
+    void play_key(int pitch, int key_id);
     void on_step(int index);
     void on_pot_bpm(float v);
 
@@ -182,6 +190,7 @@ private:
     void render_add(Canvas& c) const;
     void render_menu(Canvas& c) const;
     void render_loops(Canvas& c) const;
+    void render_keyboard(Canvas& c) const;
     void render_notice(Canvas& c) const;
     bool is_lit(const Track& t) const { return static_cast<int32_t>(t.lit_until - now_ms_) > 0; }
 
@@ -203,6 +212,9 @@ private:
     bool     audition_pending_ = false;    // une note d'essai a été retenue par la limitation de cadence
     int  add_cursor_  = 0;   // sample choisi dans la vue Samples
     int  add_scroll_  = 0;
+    View keyboard_origin_ = View::Tracks;  // vue à laquelle Back rend la main depuis le clavier
+    int      pressed_key_   = -1;   // dernière touche jouée : blanches 0..13, noires 14..23
+    uint32_t pressed_until_ = 0;    // elle reste inversée jusqu'à cet instant
     bool add_replace_ = false;  // la vue Samples remplace le sample de la piste sélectionnée
 
     MenuKind menu_kind_   = MenuKind::Track;

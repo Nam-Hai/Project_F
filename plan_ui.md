@@ -19,9 +19,11 @@ Les entrées (roue, boutons, potard) font partie de l'UI simulée : sur Teensy, 
 | Bouton **Valider** | appui | entrer dans une vue, valider une action |
 | Bouton **Back** | appui | remonter d'une vue |
 | Bouton **Menu** | appui | ouvre le menu contextuel de la vue courante (menu de la piste dans Pistes et Pattern) |
+| Bouton **Mode** | appui | vue Pattern : Edit -> Velocity -> Pitch (puis Timing, voir `plan_record.md`) |
 | Bouton **Play/Stop** | appui | transport |
 | Potard **BPM** | valeur 0..1 | tempo |
-| 16 boutons de pas | appui sur le pas 0..15 | bascule le pas dans la vue Pattern |
+| 16 boutons de pas | appui sur le pas 0..15 | bascule le pas dans la vue Pattern ; touches blanches du clavier (voir `plan_keyboard.md`) |
+| 10 boutons de touches noires (prévus) | appui sur la touche 0..9 | clavier de piano ; la première ouvre la vue Clavier |
 
 Les boutons de pas ont une LED dans l'émulateur (état du pas, pas courant), mais **le premier hardware n'en aura pas** : l'écran doit donc rester le retour principal.
 
@@ -135,6 +137,10 @@ Pistes connues, pas encore traitées :
 
 ### Sauvegarde des loops (profil)
 Voir `plan_loops.md` : **FAIT** (étapes 1 à 6). Profil = collection de loops, format JSON (jsmn) versionné avec table de samples, menu de la loop accessible depuis la ligne de titre « Pistes », vue Loops, sauvegarde / chargement / suppression, démarrage sur une loop vide.
+
+### Fonctionnalités prévues
+* **Clavier de piano 24 + 2 touches** : `plan_keyboard.md` (10 boutons ajoutés au-dessus des 16 boutons de pas).
+* **Micro-timing, roulements, enregistrement à la main** : `plan_record.md` (mode Timing, force de quantification par piste, enregistrement dans la vue Clavier avec pré-compte).
 
 ### Tour 1
 * **Fait : bouton Menu contextuel.** Le menu de la piste (changer le sample / supprimer) s'ouvre directement depuis la liste des pistes ; Valider dans le pattern n'ouvre plus de menu. Émulateur : bouton « Menu » et touche M.

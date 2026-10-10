@@ -1,5 +1,7 @@
 # Récapitulatif du Projet : Drum Machine DIY (Teensy 4.1)
 
+> **Mise à jour.** Ce document est le cahier des charges de départ. Le périmètre a évolué : **drum machine à base de samples** (la synthèse percussive est en sommeil), avec une interface complète (écran OLED, roue, boutons, 16 pas, clavier de piano). L'état actuel et les fonctionnalités prévues sont dans `plan_poc_desktop.md`, `plan_ui.md`, `plan_loops.md`, `plan_step_params.md`, `plan_keyboard.md` et `plan_record.md`.
+
 ## 1. Vision et Philosophie du Projet
 Le projet consiste à concevoir une **drum machine hybride** en C++ bas niveau sur microcontrôleur **Teensy 4.1** (ARM Cortex-M7 @ $600\text{ MHz}$).
 

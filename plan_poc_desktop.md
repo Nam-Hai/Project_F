@@ -96,28 +96,25 @@ constexpr TrackSetup DEFAULT_TRACKS[] = {
 - `main.cpp` charge les samples puis envoie tout au moteur en `Command` (`SetBpm`, `SetStep`, `SetTrackGain`, `Play`). Même chemin que l'UI.
 - Modifier puis recompiler : `cmake --build build && ./build/drum_machine`.
 
-## Étapes
-Fait :
-1. **Squelette :** CMake, `config.h`, miniaudio, sinus 440 Hz (`tone_test`). Écoute à valider par l'utilisateur.
-2. **Core minimal :** `Engine::render`, rendu hors ligne en WAV (`render_wav`).
-3. **`SynthKick`** : pitch bend exponentiel + enveloppe, avec test.
-4. **`SamplePlayer` + `sample_loader`** (passé avant le séquenceur) : lecture depuis la RAM, pitch par interpolation linéaire, `Engine::set_voice`. Le chargeur refuse tout format autre que PCM 16 bits mono 44,1 kHz, avec la commande `afconvert` en indication. Tests + `sample_demo`.
-5. **`Sequencer`** à horloge en échantillons (un pas = une double croche, reste fractionnaire conservé donc sans dérive), trigs à l'échantillon près, testé avec des blocs de tailles irrégulières.
-6. **`Command` + file SPSC (64 commandes) + `EngineState`** (pas courant, BPM, play/stop) : `SetBpm`, `SetStep`, `ToggleStep`, `SetTrackGain`, `Play`, `Stop`, `Trigger`.
-7. **`main.cpp` :** charge `default_pattern.h`, lance l'audio, Entrée pour quitter. Démarre sans erreur ; écoute de la loop à valider par l'utilisateur.
+## État actuel
+Le POC PC est terminé et largement dépassé. Ce qui est fait :
+* **Moteur portable** (`core/`) : lecteur de samples (pitch par interpolation linéaire), mixeur `float` avec soft-clipping, séquenceur à l'horloge d'échantillons (trigs à l'échantillon près), file de commandes sans verrou, état du moteur lu par l'UI, vélocité et pitch par pas. Synthé de kick conservé mais **en sommeil**.
+* **Sortie audio PC** (miniaudio) et chargement de samples WAV (PCM 16 bits, mono, 44,1 kHz).
+* **Interface complète sur l'émulateur** (Dear ImGui + SDL2, deux fenêtres : écran OLED et panneau de contrôles simulés) : voir `plan_ui.md`.
+* **Sauvegarde des loops** (profil JSON) : voir `plan_loops.md`.
+* **Vélocité et pitch par pas** (modes Edit, Velocity, Pitch) : voir `plan_step_params.md`.
 
-À faire :
-8. **UI de simulation** (TUI ou fenêtre) : modification des pas en direct, affichage du pas courant via `EngineState`, `ToggleStep`, BPM, Play/Stop.
-9. **Voix suivantes :** snare, hi-hat (cf. feuille de route).
-10. **Adaptation Teensy :** classe `AudioStream` + `AudioOutputI2S`, chargeur SD, UI matérielle.
+Planifié, pas encore commencé :
+* **Clavier de piano 24 + 2 touches** : `plan_keyboard.md`.
+* **Micro-timing, roulements et enregistrement à la main** : `plan_record.md`.
+* **Adaptation Teensy** : classe `AudioStream` + `AudioOutputI2S`, chargeur SD, lecture des vrais boutons / encodeur / potard, pilote d'écran SSD1306 (en attente du matériel).
 
 ## Limites actuelles
-- Pas de changement de pattern en direct (recompilation nécessaire) avant l'UI de simulation.
-- Un seul synthé disponible (`synth:kick`) ; piste 0 = kick synthétique par défaut dans `Engine`, remplacé si un sample est branché dessus.
-- Le `pitch` est ignoré pour `synth:kick` (réglages dans `SynthKick::Params`).
-- Pas de swing, pas de vélocité par pas (trig à 1.0).
-- Formats de samples : aucune conversion automatique (stéréo, autre fréquence ou autre profondeur refusés).
+* Pas de swing ; pas de décalage fin des notes (tout est sur la grille de 16 pas) : voir `plan_record.md`.
+* Un seul profil, pas de renommage des loops, pas de reprise automatique de session : voir `plan_loops.md`.
+* Formats de samples : aucune conversion automatique (stéréo, autre fréquence ou autre profondeur refusés).
+* Bus de pré-écoute sur une seconde sortie audio : reporté (voir `plan_ui.md`).
 
 ## Points ouverts
-- UI de simulation : TUI (rapide) ou Dear ImGui (rendu plus proche d'un panneau réel, dépendance en plus). Choix reporté à l'étape 8.
-- Écouter `tone_test`, `kick_test.wav` et la loop de `drum_machine` pour valider le son.
+* Valider à l'écoute le son de la loop et la latence de la machine de développement (utile pour la compensation de latence de l'enregistrement).
+* Adaptation Teensy, en attente du matériel.

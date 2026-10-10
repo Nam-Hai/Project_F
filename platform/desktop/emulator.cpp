@@ -18,6 +18,7 @@
 
 #include "../../core/engine.h"
 #include "../../core/ui/canvas.h"
+#include "../../core/ui/keyboard_layout.h"
 #include "../../core/ui/ui_controller.h"
 #include "audio_miniaudio.h"
 #include "imgui.h"
@@ -102,6 +103,12 @@ private:
     ImGuiContext* context_  = nullptr;
 };
 
+// Touches noires du clavier de piano (10) : Z X C V B N , . / ' (le M est déjà pris par Menu).
+constexpr ImGuiKey BLACK_KEYS[10] = {
+    ImGuiKey_Z, ImGuiKey_X, ImGuiKey_C, ImGuiKey_V, ImGuiKey_B,
+    ImGuiKey_N, ImGuiKey_Comma, ImGuiKey_Period, ImGuiKey_Slash, ImGuiKey_Apostrophe,
+};
+
 // Vue « écran » : affiche le Canvas agrandi, tel qu'il sera envoyé à l'OLED. Aucune entrée.
 class ScreenView {
 public:
@@ -184,12 +191,50 @@ public:
 
         ImGui::Spacing();
 
-        // 16 boutons de pas, avec une LED simulée : allumée si le pas est actif (vue Pattern),
-        // plus claire sur le pas en cours de lecture.
+        // 10 touches noires du clavier de piano, au-dessus des 16 boutons de pas, décalées entre deux
+        // blanches. Hors de la vue Clavier, seule la première est active : elle ouvre le clavier.
+        const bool  in_keyboard = ui.view() == UiController::View::Keyboard;
+        const float spacing     = ImGui::GetStyle().ItemSpacing.x;
+        const float white_w     = 44.0f;
+        const float black_w     = 30.0f;
+        const float black_h     = 34.0f;
+        const float x0          = ImGui::GetCursorPosX();
+        const float y0          = ImGui::GetCursorPosY();
+
+        ImGui::SetCursorPos(ImVec2(x0 + 4.0f, y0));
+        ImGui::TextDisabled("Clavier");  // étiquette de la première touche noire
+        const float black_y = y0 + ImGui::GetTextLineHeightWithSpacing();
+
+        static const char* const black_names[10] = {"C#", "D#", "F#", "G#", "A#", "C#", "D#", "F#", "G#", "A#"};
+        for (int j = 0; j < keyboard::BLACK_KEYS; ++j) {
+            const float center = x0 + keyboard::BLACK_LEFT_WHITE[j] * (white_w + spacing) + white_w + spacing * 0.5f;
+            ImGui::SetCursorPos(ImVec2(center - black_w * 0.5f, black_y));
+
+            ImGui::BeginDisabled(!in_keyboard && j != 0);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.07f, 0.07f, 0.09f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.20f, 0.26f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.35f, 0.45f, 1.0f));
+            // Une bordure claire : sans elle, la touche noire se confond avec le fond du panneau.
+            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.75f, 0.75f, 0.82f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.5f);
+            char label[24];
+            std::snprintf(label, sizeof label, "%s##black%d", black_names[j], j);
+            if (ImGui::Button(label, ImVec2(black_w, black_h))) ui.handle(InputEvent::black(j));
+            ImGui::PopStyleVar();
+            ImGui::PopStyleColor(4);
+            ImGui::EndDisabled();
+        }
+
+        // 16 boutons de pas, avec une LED simulée : allumée si le pas est actif (vue Pattern), plus claire sur
+        // le pas en cours de lecture. En vue Clavier ce sont les touches blanches : nom de la note, les deux
+        // dernières grisées.
+        ImGui::SetCursorPos(ImVec2(x0, black_y + black_h + 6.0f));
+
         const bool     in_pattern = ui.view() == UiController::View::Pattern;
         const uint16_t bits       = in_pattern ? ui.pattern_bits(ui.selected_track()) : 0;
         const int      play_step  = state.playing.load() ? state.step.load() : -1;
 
+        static const char* const white_names[14] = {"C", "D", "E", "F", "G", "A", "B", "C", "D", "E", "F", "G", "A", "B"};
         for (int i = 0; i < cfg::MAX_STEPS; ++i) {
             const bool on      = (bits >> i) & 1u;
             const bool playing = (i == play_step);
@@ -198,17 +243,29 @@ public:
             if (playing) color = on ? ImVec4(1.0f, 0.85f, 0.3f, 1.0f) : ImVec4(0.45f, 0.55f, 0.65f, 1.0f);
 
             char label[24];
-            std::snprintf(label, sizeof label, "%d##step%d", i + 1, i);
+            if (in_keyboard) {
+                // Touches blanches : claires, texte sombre ; le Do central (note de base) est souligné par son nom.
+                color = ImVec4(0.82f, 0.82f, 0.86f, 1.0f);
+                std::snprintf(label, sizeof label, "%s##step%d", i < keyboard::WHITE_KEYS ? white_names[i] : "-", i);
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.05f, 0.05f, 0.08f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.95f, 1.0f, 1.0f));
+            } else {
+                std::snprintf(label, sizeof label, "%d##step%d", i + 1, i);
+            }
+            ImGui::BeginDisabled(in_keyboard && i >= keyboard::WHITE_KEYS);
             ImGui::PushStyleColor(ImGuiCol_Button, color);
-            if (ImGui::Button(label, ImVec2(44, 44))) ui.handle(InputEvent::step(i));
+            if (ImGui::Button(label, ImVec2(white_w, 44))) ui.handle(InputEvent::step(i));
             ImGui::PopStyleColor();
+            ImGui::EndDisabled();
+            if (in_keyboard) ImGui::PopStyleColor(2);
             if (i != cfg::MAX_STEPS - 1) ImGui::SameLine();
         }
 
         ImGui::Spacing();
         ImGui::TextDisabled("Molette de la souris sur la roue, ou fleches haut/bas.");
         ImGui::TextDisabled("Entree = Valider, Retour/Echap = Back, M = Menu, Tab = Mode, Espace = Play/Stop,");
-        ImGui::TextDisabled("1-8 et Q W E R T Y U I = pas 1 a 16.");
+        ImGui::TextDisabled("1-8 et Q W E R T Y U I = pas 1 a 16 (touches blanches du clavier).");
+        ImGui::TextDisabled("Z X C V B N , . / ' = touches noires 1 a 10 (la 1re ouvre le clavier).");
     }
 
     void keyboard(UiController& ui) {
@@ -222,6 +279,8 @@ public:
         if (ImGui::IsKeyPressed(ImGuiKey_Space, false)) ui.handle(InputEvent::play());
         for (int i = 0; i < 16; ++i)
             if (ImGui::IsKeyPressed(STEP_KEYS[i], false)) ui.handle(InputEvent::step(i));
+        for (int j = 0; j < 10; ++j)
+            if (ImGui::IsKeyPressed(BLACK_KEYS[j], false)) ui.handle(InputEvent::black(j));
     }
 
 private:
@@ -261,7 +320,7 @@ int main() {
     {
         // Le vsync d'une seule fenêtre cadence la boucle (deux vsync de suite la diviseraient par deux).
         HostWindow screen_window("Drum machine - Ecran OLED", 60, 60, 800, 420, true);
-        HostWindow controls_window("Drum machine - Controles (materiel simule)", 60, 520, 940, 300, false);
+        HostWindow controls_window("Drum machine - Controles (materiel simule)", 60, 490, 940, 400, false);
         if (!screen_window.ok() || !controls_window.ok()) {
             std::fprintf(stderr, "SDL : %s\n", SDL_GetError());
             return 1;

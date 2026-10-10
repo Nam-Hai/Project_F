@@ -46,6 +46,8 @@ private:
     void apply(const Command& cmd);
     void fire_step();
     void play_step(int track, int step);
+    void schedule(double countdown, int track, int velocity, int pitch);
+    void fire_pending();
     void release_sample(int track);
     void clear_track(int track);
     void release_pointer(const int16_t*& data);
@@ -53,6 +55,18 @@ private:
     // Rend des échantillons sans s'occuper du séquenceur, par blocs d'au plus cfg::BLOCK.
     void render_audio(float* left, float* right, int frames);
     void render_block(float* left, float* right, int frames);
+
+    // Notes en attente : une note décalée par rapport à son pas part à son instant exact, à l'échantillon près.
+    struct Pending {
+        double  countdown = 0.0;  // échantillons avant le départ
+        uint8_t track     = 0;
+        uint8_t velocity  = 0;
+        int8_t  pitch     = 0;
+    };
+    static constexpr int MAX_PENDING = 256;  // au plus 16 pistes x 4 notes x 2 pas à programmer par frontière
+    Pending pending_[MAX_PENDING];
+    int     pending_count_ = 0;
+    bool    just_started_  = false;  // la lecture vient de démarrer : les notes en avance du pas 0 partent tout de suite
 
     SynthKick   kick_;
     Sequencer   seq_;

@@ -132,3 +132,11 @@ add_test(NAME step_params COMMAND test_step_params)
 add_executable(test_step_edit tests/test_step_edit.cpp)
 target_link_libraries(test_step_edit PRIVATE core)
 add_test(NAME step_edit COMMAND test_step_edit)
+
+add_executable(test_note tests/test_note.cpp)
+target_link_libraries(test_note PRIVATE core)
+add_test(NAME note COMMAND test_note)
+
+add_executable(test_keyboard tests/test_keyboard.cpp)
+target_link_libraries(test_keyboard PRIVATE core)
+add_test(NAME keyboard COMMAND test_keyboard)

@@ -1,5 +1,7 @@
 #include "ui_controller.h"
 
+#include "keyboard_layout.h"
+
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -116,6 +118,7 @@ void UiController::handle(const InputEvent& e) {
         case InputEvent::Mode:   on_mode(); break;
         case InputEvent::Play:   on_play(); break;
         case InputEvent::Step:   on_step(e.index); break;
+        case InputEvent::Black:  on_black(e.index); break;
         case InputEvent::PotBpm: on_pot_bpm(e.value); break;
     }
 }
@@ -145,6 +148,8 @@ void UiController::on_wheel(int delta) {
             break;
         case View::Pattern:
             adjust_step_value(delta);
+            break;
+        case View::Keyboard:
             break;
     }
 }
@@ -277,6 +282,8 @@ void UiController::on_ok() {
         case View::Loops:
             on_loops_ok();
             break;
+        case View::Keyboard:
+            break;
     }
 }
 
@@ -296,6 +303,9 @@ void UiController::on_back() {
         case View::Loops:
             confirm_ = false;
             view_    = View::Tracks;
+            break;
+        case View::Keyboard:
+            view_ = keyboard_origin_;
             break;
         case View::Tracks:
             break;
@@ -326,6 +336,8 @@ void UiController::on_menu() {
             break;
         case View::Add:
             break;  // pas de menu dans cette vue pour l'instant
+        case View::Keyboard:
+            break;
     }
 }
 
@@ -392,6 +404,54 @@ void UiController::audition_selected_step() {
     audition_pending_ = false;
 }
 
+// Touche noire. Dans la vue Clavier, elle joue sa note. Ailleurs, seule la première a un effet : elle
+// ouvre la vue Clavier (depuis la vue Pattern, ou la vue Pistes avec le curseur sur une piste) et joue
+// sa note. Les autres noires, et la première dans les autres vues, sont ignorées.
+void UiController::on_black(int index) {
+    if (index < 0 || index >= keyboard::BLACK_KEYS) return;
+
+    if (view_ == View::Keyboard) {
+        play_key(keyboard::BLACK_PITCH[index], keyboard::WHITE_KEYS + index);
+        return;
+    }
+    if (index != 0) return;
+
+    if (view_ == View::Pattern) {
+        enter_keyboard(selected_);
+    } else if (view_ == View::Tracks && cursor_ >= 0 && cursor_ < track_count_) {
+        enter_keyboard(cursor_);
+    } else {
+        return;
+    }
+    play_key(keyboard::BLACK_PITCH[0], keyboard::WHITE_KEYS);
+}
+
+// Touche blanche, dans la vue Clavier : les 14 premières jouent, les deux dernières sont inactives.
+void UiController::on_white_key(int index) {
+    if (index < 0 || index >= keyboard::WHITE_KEYS) return;
+    play_key(keyboard::WHITE_PITCH[index], index);
+}
+
+void UiController::enter_keyboard(int track) {
+    keyboard_origin_  = view_;
+    selected_         = track;
+    audition_pending_ = false;
+    pressed_key_      = -1;
+    view_             = View::Keyboard;
+}
+
+// Joue la piste du clavier tout de suite, au pitch de la touche ; la touche s'inverse un instant.
+void UiController::play_key(int pitch, int key_id) {
+    Command c;
+    c.type  = Command::Note;
+    c.track = tracks_[selected_].engine_track;
+    c.value = static_cast<float>(KEYBOARD_VELOCITY);
+    c.pitch = static_cast<int8_t>(pitch);
+    if (!sink_.push(c)) return;
+    pressed_key_   = key_id;
+    pressed_until_ = now_ms_ + LIT_MS;
+}
+
 void UiController::on_play() {
     Command c;
     c.type = playing_ ? Command::Stop : Command::Play;
@@ -399,6 +459,10 @@ void UiController::on_play() {
 }
 
 void UiController::on_step(int index) {
+    if (view_ == View::Keyboard) {
+        on_white_key(index);
+        return;
+    }
     if (view_ != View::Pattern || index < 0 || index >= cfg::MAX_STEPS) return;
 
     Track& t = tracks_[selected_];
@@ -885,6 +949,10 @@ void UiController::render(Canvas& c) const {
             render_header(c, "Loops", false);
             render_loops(c);
             break;
+        case View::Keyboard:
+            render_header(c, tracks_[selected_].name, false);
+            render_keyboard(c);
+            break;
     }
     if (error_shown()) render_notice(c);
 }
@@ -1094,6 +1162,38 @@ void UiController::render_loops(Canvas& c) const {
             std::snprintf(label, sizeof label, " + Nouvelle loop");
         }
         c.text(0, y, label, sel);
+    }
+}
+
+// Vue Clavier : un clavier de piano dessiné à l'échelle des boutons (14 blanches de 8 pixels, les deux
+// dernières cases vides ; 10 noires au-dessus, décalées entre deux blanches). La touche jouée s'inverse
+// un instant ; le Do central (note de base) est marqué d'un point. La rangée du bas est réservée à
+// l'enregistrement (rangée du temps).
+void UiController::render_keyboard(Canvas& c) const {
+    constexpr int TOP         = 16;  // haut du clavier
+    constexpr int WHITE_H     = 36;  // hauteur des blanches
+    constexpr int BLACK_H     = 20;  // hauteur des noires
+    constexpr int BLACK_W     = 5;
+
+    const bool lit        = static_cast<int32_t>(pressed_until_ - now_ms_) > 0;
+    const int  pressed    = lit ? pressed_key_ : -1;
+
+    // Blanches : contour, pleine quand elle est jouée.
+    for (int i = 0; i < keyboard::WHITE_KEYS; ++i) {
+        const bool down = (pressed == i);
+        c.rect(i * 8, TOP, 7, WHITE_H, down);
+    }
+    // Note de base : un point au bas du Do central (inversé si la touche est pleine).
+    {
+        const int x = keyboard::ROOT_WHITE * 8 + 2;
+        c.rect(x, TOP + WHITE_H - 6, 3, 3, true, pressed != keyboard::ROOT_WHITE);
+    }
+    // Noires : pleines ; creuses quand elles sont jouées.
+    for (int j = 0; j < keyboard::BLACK_KEYS; ++j) {
+        const int  x0   = keyboard::BLACK_LEFT_WHITE[j] * 8 + 5;
+        const bool down = (pressed == keyboard::WHITE_KEYS + j);
+        c.rect(x0, TOP, BLACK_W, BLACK_H, true, true);
+        if (down) c.rect(x0 + 1, TOP + 1, BLACK_W - 2, BLACK_H - 2, true, false);
     }
 }
 

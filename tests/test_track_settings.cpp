@@ -233,38 +233,44 @@ int main() {
         CHECK(f.ui.track_setting() == Set::Gain, "touche 1 : Gain");
         f.ui.render(c);
         // Gain 1 = 0 dB : jauge de -40 à +6 dB sur 97 pixels, 0 dB à 40/46 : 84 pixels remplis, repère à x = 85.
-        CHECK(header_text_is(c, "Gain") && value_is(c, "+0dB") && lit(c, 1, 49, 84, 5) == 84 * 5 && lit(c, 86, 49, 12, 5) == 0 && lit(c, 85, 47, 1, 9) > 0,
-              "jauge du gain : 84 pixels et repère de 0 dB, « +0dB »");
+        CHECK(header_text_is(c, "Gain") && value_is(c, "+0.0dB") && lit(c, 1, 49, 84, 5) == 84 * 5 && lit(c, 86, 49, 12, 5) == 0 && lit(c, 85, 47, 1, 9) > 0,
+              "gain gauge: 84 pixels and the 0 dB mark, \"+0.0dB\"");
 
         f.feed({InputEvent::wheel(1)});
-        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 1.0f / 20.0f)) && near_f(f.sink.last(Command::SetTrackGain).value, 1.1220185f) && f.ui.dirty(),
-              "+1 cran = +1 dB, commande envoyée, loop modifiée");
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 0.5f / 20.0f)) && near_f(f.sink.last(Command::SetTrackGain).value, 1.0592537f) && f.ui.dirty(),
+              "+1 notch = +0.5 dB, command sent, loop modified");
         f.ui.render(c);
-        CHECK(value_is(c, "+1dB"), "valeur affichée : +1dB");
+        CHECK(value_is(c, "+0.5dB"), "displayed value: +0.5dB");
         f.feed({InputEvent::wheel(100)});
-        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 6.0f / 20.0f)), "borné à +6 dB");
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, 6.0f / 20.0f)), "capped at +6 dB");
         f.ui.render(c);
-        CHECK(value_is(c, "+6dB") && lit(c, 1, 49, 97, 5) == 97 * 5, "+6 dB : jauge pleine");
+        CHECK(value_is(c, "+6.0dB") && lit(c, 1, 49, 97, 5) == 97 * 5, "+6 dB: full gauge");
         f.sink.sent.clear();
         f.feed({InputEvent::wheel(1)});
-        CHECK(f.sink.sent.empty(), "à +6 dB : rien d'envoyé");
+        CHECK(f.sink.sent.empty(), "at +6 dB: nothing sent");
 
-        f.feed({InputEvent::wheel(-6)});
-        CHECK(near_f(f.ui.track_gain(0), 1.0f), "retour exactement à 0 dB (gain 1)");
-        f.feed({InputEvent::wheel(-3)});
-        f.ui.render(c);
-        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, -3.0f / 20.0f)) && value_is(c, "-3dB"), "-3 dB");
-        f.feed({InputEvent::wheel(-37)});
-        f.ui.render(c);
-        CHECK(near_f(f.ui.track_gain(0), 0.01f) && value_is(c, "-40dB") && lit(c, 1, 49, 84, 5) == 0, "-40 dB : plancher de la jauge, barre vide (seul reste le repère de 0 dB)");
+        f.feed({InputEvent::wheel(-12)});
+        CHECK(near_f(f.ui.track_gain(0), 1.0f), "back to exactly 0 dB (gain 1)");
         f.feed({InputEvent::wheel(-1)});
         f.ui.render(c);
-        CHECK(f.ui.track_gain(0) == 0.0f && f.sink.last(Command::SetTrackGain).value == 0.0f && value_is(c, "-inf"), "un cran de plus : muet (gain 0), « -inf »");
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, -0.5f / 20.0f)) && value_is(c, "-0.5dB"), "-0.5 dB: the sign is kept below 1 dB");
+        f.feed({InputEvent::wheel(-5)});
+        f.ui.render(c);
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, -3.0f / 20.0f)) && value_is(c, "-3.0dB"), "-3 dB");
+        f.feed({InputEvent::wheel(1)});
+        f.ui.render(c);
+        CHECK(near_f(f.ui.track_gain(0), std::pow(10.0f, -2.5f / 20.0f)) && value_is(c, "-2.5dB"), "-2.5 dB (up from -3 dB)");
+        f.feed({InputEvent::wheel(-75)});
+        f.ui.render(c);
+        CHECK(near_f(f.ui.track_gain(0), 0.01f) && value_is(c, "-40.0dB") && lit(c, 1, 49, 84, 5) == 0, "-40 dB: gauge floor, empty bar (only the 0 dB mark remains)");
+        f.feed({InputEvent::wheel(-1)});
+        f.ui.render(c);
+        CHECK(f.ui.track_gain(0) == 0.0f && f.sink.last(Command::SetTrackGain).value == 0.0f && value_is(c, "-inf"), "one more notch: mute (gain 0), \"-inf\"");
         f.sink.sent.clear();
         f.feed({InputEvent::wheel(-5)});
-        CHECK(f.sink.sent.empty() && f.ui.track_gain(0) == 0.0f, "muet : rien de plus bas");
+        CHECK(f.sink.sent.empty() && f.ui.track_gain(0) == 0.0f, "mute: nothing lower");
         f.feed({InputEvent::wheel(1)});
-        CHECK(near_f(f.ui.track_gain(0), 0.01f), "depuis muet, un cran remonte à -40 dB");
+        CHECK(near_f(f.ui.track_gain(0), 0.01f), "from mute, one notch goes back up to -40 dB");
         f.feed({InputEvent::black_up(0)});
         CHECK(f.ui.track_setting() == Set::None, "relâchée : réglage terminé, valeur gardée");
 
@@ -274,7 +280,7 @@ int main() {
         CHECK(near_f(f.ui.track_gain(0), 0.01f), "file pleine : valeur inchangée");
     }
     {
-        // Un gain qui n'est pas sur la grille des dB entiers (0,8 = -1,94 dB, venu d'un fichier) : arrondi dans le sens du cran.
+        // A gain that is off the 0.5 dB grid (0.8 = -1.94 dB, coming from a file): rounded in the direction of the notch.
         RecordingSink sink;
         EngineState   state;
         UiController  ui(sink);
@@ -284,9 +290,9 @@ int main() {
         ui.handle(InputEvent::black(0));
         Canvas c;
         ui.render(c);
-        CHECK(value_is(c, "-2dB"), "0,8 s'affiche -2dB");
+        CHECK(value_is(c, "-1.9dB"), "0.8 shows as -1.9dB");
         ui.handle(InputEvent::wheel(1));
-        CHECK(near_f(ui.track_gain(0), std::pow(10.0f, -1.0f / 20.0f)), "un cran vers le haut : -1 dB (pas de retour sur la même valeur)");
+        CHECK(near_f(ui.track_gain(0), std::pow(10.0f, -1.5f / 20.0f)), "one notch up: -1.5 dB (no return to the same value)");
         ui.handle(InputEvent::black_up(0));
         UiController ui2(sink);
         ui2.add_track("a.wav", 2, 0x0001, 0.8f);
@@ -294,25 +300,36 @@ int main() {
         ui2.handle(InputEvent::ok());
         ui2.handle(InputEvent::black(0));
         ui2.handle(InputEvent::wheel(-1));
-        CHECK(near_f(ui2.track_gain(0), std::pow(10.0f, -2.0f / 20.0f)), "un cran vers le bas : -2 dB");
-        // Un gain très bas mais pas nul (0,005 = -46 dB) : affiché en dB ; vers le haut on remonte au plancher, vers le bas c'est muet.
+        CHECK(near_f(ui2.track_gain(0), std::pow(10.0f, -2.0f / 20.0f)), "one notch down: -2 dB");
+        // A very low but non-zero gain (0.005 = -46 dB): shown in dB; going up lands on the floor, going down is mute.
         UiController ui5(sink);
         ui5.add_track("a.wav", 2, 0x0001, 0.005f);
         ui5.update(state, 0);
         ui5.handle(InputEvent::ok());
         ui5.handle(InputEvent::black(0));
         ui5.render(c);
-        CHECK(value_is(c, "-46dB"), "0,005 s'affiche -46dB (pas « -inf » : ce n'est pas muet)");
+        CHECK(value_is(c, "-46.0dB"), "0.005 shows as -46.0dB (not \"-inf\": it is not mute)");
         ui5.handle(InputEvent::wheel(1));
-        CHECK(near_f(ui5.track_gain(0), 0.01f), "un cran vers le haut : remonte au plancher de -40 dB");
+        CHECK(near_f(ui5.track_gain(0), 0.01f), "one notch up: goes back up to the -40 dB floor");
         UiController ui6(sink);
         ui6.add_track("a.wav", 2, 0x0001, 0.005f);
         ui6.update(state, 0);
         ui6.handle(InputEvent::ok());
         ui6.handle(InputEvent::black(0));
         ui6.handle(InputEvent::wheel(-1));
-        CHECK(ui6.track_gain(0) == 0.0f, "un cran vers le bas : muet");
-        // Un gain de départ de 0 est muet.
+        CHECK(ui6.track_gain(0) == 0.0f, "one notch down: mute");
+        // Just below 0 dB (0.99 = -0.09 dB): shows "-0.1dB" and one notch up lands exactly on 0 dB.
+        UiController ui7(sink);
+        ui7.add_track("a.wav", 2, 0x0001, 0.99f);
+        ui7.update(state, 0);
+        ui7.handle(InputEvent::ok());
+        ui7.handle(InputEvent::black(0));
+        ui7.render(c);
+        CHECK(value_is(c, "-0.1dB"), "0.99 shows as -0.1dB");
+        ui7.handle(InputEvent::wheel(1));
+        ui7.render(c);
+        CHECK(near_f(ui7.track_gain(0), 1.0f) && value_is(c, "+0.0dB"), "one notch up: 0 dB, shown +0.0dB");
+        // A starting gain of 0 is mute.
         UiController ui3(sink);
         ui3.add_track("a.wav", 2, 0x0001, 0.0f);
         ui3.update(state, 0);
@@ -355,8 +372,8 @@ int main() {
             e.render(l.data(), r.data(), 8);
             return l[0];
         };
-        CHECK(near_f(run(6), out_of(0.5f * std::pow(10.0f, 6.0f / 20.0f))), "+6 dB : la note sort à 1,995 fois le niveau");
-        CHECK(near_f(run(-6), out_of(0.5f * std::pow(10.0f, -6.0f / 20.0f))), "-6 dB : la note sort à 0,5 fois le niveau");
+        CHECK(near_f(run(12), out_of(0.5f * std::pow(10.0f, 6.0f / 20.0f))), "+6 dB: the note comes out at 1.995 times the level");
+        CHECK(near_f(run(-12), out_of(0.5f * std::pow(10.0f, -6.0f / 20.0f))), "-6 dB: the note comes out at 0.5 times the level");
         CHECK(run(-100) == 0.0f, "muet : silence");
 
         // Le moteur borne SetTrackGain à 0..4.

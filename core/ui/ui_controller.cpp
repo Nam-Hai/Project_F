@@ -486,22 +486,24 @@ UiController::TrackSetting UiController::setting_for_key(int index) {
     }
 }
 
-// Gain de la piste (touche noire 1 tenue) : 1 dB par cran, de -40 dB (en dessous : muet) à +6 dB. Une valeur qui n'est
-// pas sur la grille des dB entiers (0,8 par exemple) passe d'abord au dB entier le plus proche dans le sens du mouvement.
+// Track gain (black key 1 held): 0.5 dB per notch, from -40 dB (below that: muted) to +6 dB. Computed in integer tenths of
+// a dB so the grid has no floating-point drift. A value that is off the 0.5 dB grid (0.8 = -1.9 dB, for example) first moves
+// to the nearest grid point in the direction of the notch.
 void UiController::adjust_gain(int delta) {
     Track& t = tracks_[selected_];
 
-    constexpr int MIN_DB = -40, MAX_DB = 6;
-    // Position actuelle en dB : un cran de plus que MIN_DB pour muet (gain 0).
-    double db = t.gain > 0.0f ? 20.0 * std::log10(static_cast<double>(t.gain)) : static_cast<double>(MIN_DB - 1);
-    if (db < MIN_DB) db = MIN_DB - 1;
-    double next = db;
+    constexpr int    MIN_T = -400, MAX_T = 60, STEP_T = 5;  // tenths of dB
+    constexpr double EPS   = 1e-3;                          // in grid steps: absorbs the float rounding of the stored gain
+    // Current position in tenths of dB; one step below MIN_T stands for mute (gain 0).
+    double pos = t.gain > 0.0f ? 200.0 * std::log10(static_cast<double>(t.gain)) : static_cast<double>(MIN_T - STEP_T);
+    if (pos < MIN_T) pos = MIN_T - STEP_T;
+    double next = pos;
     for (int k = delta > 0 ? delta : -delta; k > 0; --k) {
-        next = delta > 0 ? std::floor(next + 1e-6) + 1.0 : std::ceil(next - 1e-6) - 1.0;
+        next = (delta > 0 ? std::floor(next / STEP_T + EPS) + 1.0 : std::ceil(next / STEP_T - EPS) - 1.0) * STEP_T;
     }
-    if (next > MAX_DB) next = MAX_DB;
-    if (next < MIN_DB) next = delta > 0 ? MIN_DB : MIN_DB - 1;  // sous le plancher : vers le haut on y remonte, vers le bas c'est muet
-    const float gain = next < MIN_DB ? 0.0f : static_cast<float>(std::pow(10.0, next / 20.0));
+    if (next > MAX_T) next = MAX_T;
+    if (next < MIN_T) next = delta > 0 ? MIN_T : MIN_T - STEP_T;  // below the floor: going up lands on it, going down is mute
+    const float gain = next < MIN_T ? 0.0f : static_cast<float>(std::pow(10.0, next / 200.0));
     if (gain == t.gain) return;
 
     Command c;
@@ -1592,7 +1594,11 @@ void UiController::render_pattern(Canvas& c, bool timeline) const {
             if (fill > 0) c.rect(1, GAUGE_Y + 1, fill, 5, true);
             c.vline(1 + static_cast<int>(std::lround(static_cast<double>(0 - MIN_DB) / (MAX_DB - MIN_DB) * (GAUGE_W - 3))), GAUGE_Y - 1, 9);
             if (t.gain <= 0.0f) std::snprintf(value, sizeof value, "-inf");
-            else std::snprintf(value, sizeof value, "%+.0fdB", db);
+            else {
+                const int tenths = static_cast<int>(std::lround(db * 10.0));  // integer formatting only: no float printf on the Teensy
+                const int mag    = tenths < 0 ? -tenths : tenths;
+                std::snprintf(value, sizeof value, "%c%d.%ddB", tenths < 0 ? '-' : '+', mag / 10, mag % 10);
+            }
         } else if (setting == TrackSetting::Width) {
             // Du centre (0 = inchangé) : vers la gauche pour le mono (100M = mono complet), vers la droite pour
             // élargir (100W = côtés doublés). Presque un demi-pixel par point : 48 pixels pour 100.

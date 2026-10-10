@@ -25,7 +25,6 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - **B-030** Fonction « afficher ce Canvas » isolée (priorité 2)
 - **B-040** Protocole d'événements de la télécommande (priorité 2)
 - **B-050** Installer PlatformIO (utilisateur doit confirmer, priorité 2)
-- **B-052** Remplacer le `%f` du gain en dB (priorité 3)
 - **B-070** Journal d'erreurs sur la carte (priorité 3)
 - **B-080** Série de scénarios de charge (priorité 2)
 
@@ -126,10 +125,11 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - terminé quand: carte `teensy41`, `build_src_filter` sur `core/` et `platform/teensy/`, options `-std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wdouble-promotion` ; un programme minimal qui inclut `core/` compile sans erreur ; surprises de portabilité corrigées.
 
 ### B-052 Remplacer le `%f` du gain en dB
-- statut: todo · priorité: 3 · propriétaire: claude · étiquettes: phase-0, core
+- statut: done · priorité: 3 · propriétaire: claude · étiquettes: phase-0, core
 - dépend de: —
 - références: plan_teensy.md#T11 ; core/ui/ui_controller.cpp
 - terminé quand: l'affichage du gain en dB n'utilise plus de format flottant, avec le même rendu ; tests d'interface inchangés.
+- vérifié: `snprintf("%+ddB", lround(db))` dans `core/ui/ui_controller.cpp` ; plus aucun format flottant dans `core/` hors `profile_codec` (JSON, PC seulement) ; build propre, 24 tests sur 24 passent. Prolongement hors backlog (demande de l'utilisateur) : pas du gain à 0,5 dB, affichage `+0.5dB`.
 
 ### B-053 Taille du code et de la mémoire sur la Teensy
 - statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage

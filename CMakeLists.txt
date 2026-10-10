@@ -180,3 +180,7 @@ add_test(NAME envelope COMMAND test_envelope)
 add_executable(test_envelope_ui tests/test_envelope_ui.cpp)
 target_link_libraries(test_envelope_ui PRIVATE core)
 add_test(NAME envelope_ui COMMAND test_envelope_ui)
+
+# Banc d'essai du moteur (pire cas) : voir plan_teensy.md, T1. Pas un test : il ne vérifie rien, il mesure.
+add_executable(bench_engine tools/bench_engine.cpp)
+target_link_libraries(bench_engine PRIVATE core)

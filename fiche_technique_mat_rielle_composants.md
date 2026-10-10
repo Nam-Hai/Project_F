@@ -30,7 +30,7 @@
 | **SCK** | SCK / MCK | **GND** | Mis à la masse (active la PLL interne du PCM5102A) |
 | **FLT** | FLT | **GND** | Filtre passe-bas (Normal Low Latency) |
 | **DMP** | DEMP | **GND** | Désactive le De-emphasis |
-| **XMT** | XSMT | **3.3V** | Soft Mute désactivé (HIGH = actif, LOW = mute) |
+| **XMT** | XSMT | **broche libre de la Teensy** (à choisir) | Mute logiciel : LOW au démarrage, HIGH ~100 ms après le démarrage de l'I2S (HIGH = actif, LOW = mute) ; voir `plan_teensy.md` T9. Pour un premier essai sans code, on peut le relier au 3.3V |
 | **FMT** | FMT | **GND** | Format I2S standard |
 
 ---
@@ -67,7 +67,7 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 | :--- | :--- | :--- | :--- |
 | Microcontrôleur | Teensy 4.1 (avec headers) | 1 | Processeur principal & moteur DSP |
 | DAC I2S | Module Breakout PCM5102A | 1 | Conversion Numérique -> Analogique |
-| Puce Mémoire **(retenue)** | PSRAM QSPI $8\text{ Mo}$ (SOIC-8), soudée sous la Teensy (ou Teensy 4.1 vendue avec la PSRAM déjà montée) | 1 (8 Mo), 2 si besoin (16 Mo) | Mémoire vive pour les samples WAV, notamment **stéréo** (deux fois plus lourds que le mono) : la RAM2 (512 Ko) ne suffit pas pour des 808 longs. Pas de conflit avec la carte microSD (lecteur de l'autre côté de la carte, autre bus). |
+| Puce Mémoire **(retenue)** | PSRAM QSPI : carte vendue avec les puces soudées, **référence mise de côté : Protosupplies « Teensy 4.1 Fully Loaded », 16 Mo de PSRAM** (variante avec 256 Mo de flash NAND en option, voir plan_teensy.md T17) | 1 à 2 puces (8 à 16 Mo) | Mémoire vive pour les samples WAV, notamment **stéréo** (deux fois plus lourds que le mono) : la RAM2 (512 Ko) ne suffit pas pour des 808 longs. Pas de conflit avec la carte microSD (lecteur de l'autre côté de la carte, autre bus). |
 | Potentiomètre | $10\text{ k}\Omega$ Logarithmique | 1 | Contrôle du volume général |
 | Condensateurs | $10\ \mu\text{F}$ Electrolytique / $2,2\text{ nF}$ Céramique | 2 de chaque | Découplage DC et filtrage passe-bas |
 | Résistances | $1\text{ k}\Omega$, $10\text{ k}\Omega$, $100\text{ k}\Omega$ | 4 à 8 | Atténuation et polarisation AOP |

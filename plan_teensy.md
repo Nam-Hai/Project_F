@@ -13,11 +13,11 @@ Le POC est terminé côté fonctionnalités. Avant d'écrire du code Teensy, on 
 
 ## Les sujets (dans l'ordre proposé)
 
-### T1. Budget CPU du moteur — `à mesurer`
+### T1. Budget CPU du moteur — `à mesurer sur la carte, avec la série de scénarios de T13`
 * **Constat** : le pire cas mesuré sur Mac prend 2,4 % (moyenne) à 7,6 % (pire bloc) du budget d'un bloc ; l'extrapolation Teensy est de 35 à 70 % en moyenne et dépasse le budget au pire.
 * **À décider** : quelle polyphonie veut-on garantir (16 pistes, combien de queues, stéréo partout) ? Quelle marge de CPU garde-t-on pour l'écran, la SD, les entrées ?
 * **Options** : limiter les queues à 2 ; sortir le `switch` de l'enveloppe de la boucle par échantillon (traiter par segments) ; remplacer `tanh` par une approximation ; mode de qualité réduite (mono, sans interpolation) ; compteur de cycles DWT pour mesurer sur la carte ; un banc d'essai permanent dans les tests.
-* **Pour trancher** : mesurer sur la vraie carte dès que l'audio sort (P1). En attendant, ne pas optimiser à l'aveugle.
+* **Pour trancher** : mesurer sur la vraie carte dès que l'audio sort (P1) avec la série de scénarios de charge décrite en T13. En attendant, ne pas optimiser à l'aveugle.
 
 ### T2. Entrées : horodatage et chaîne d'interruptions — `en attente, basse priorité` (10/10/2026)
 * **Constat (inchangé)** : les `InputEvent` n'ont pas d'horodatage ; une frappe est datée au début du bloc de rendu suivant son arrivée dans le moteur. Tout retard variable (image de l'émulateur à 16 ms, `loop()` occupé sur la Teensy, transit USB de la télécommande) se retrouve dans le groove enregistré ; la compensation de latence ne corrige que le retard fixe.
@@ -25,7 +25,7 @@ Le POC est terminé côté fonctionnalités. Avant d'écrire du code Teensy, on 
 * **Pour la mise en route** : les frappes sont datées à leur arrivée dans le moteur, comme aujourd'hui. La précision de l'enregistrement par la télécommande de l'ordinateur sera limitée (USB et image de l'émulateur) ; ce n'est pas bloquant pour valider l'audio, l'écran, la carte SD et l'interface.
 * **Pistes déjà identifiées (pour plus tard)** : horloge commune = compteur d'échantillons joués par le moteur ; champ « moment de la frappe » dans `Command::Note`, le moteur retirant le temps écoulé de la position calculée ; lecture des boutons dans un timer (décidé en T3), file d'entrées à part pour garder un seul producteur sur la file des commandes ; priorités des interruptions (la mise à jour audio est une interruption de faible priorité) ; côté PC, utiliser l'horodatage des événements SDL plutôt que la lecture à chaque image ; conversion d'horloge pour la télécommande.
 
-### T3. Câblage des boutons — `décidé` (10/10/2026)
+### T3. Câblage des boutons — `conception décidée, réalisation reportée` (10/10/2026) : pour l'instant l'interface reste sur le PC (télécommande, T16) ; on se concentre sur la Teensy, l'écran, la PSRAM et la sortie audio
 * **Constat** : 31 boutons (16 pas, 10 touches noires, 5 commandes), plus encodeur, potard, écran, I2S. Appui **et** relâchement nécessaires (touches noires tenues), appuis simultanés nécessaires (touche tenue + roue + bouton de pas, accords en mode Clavier). La Teensy 4.1 a environ 42 broches de bord et 7 plots sous la carte (numéros à vérifier sur la carte de brochage de PJRC) : le câblage direct (31 broches + 11 à 13 pour le reste) prendrait presque tout, sans place pour des LED.
 * **Réponses de l'utilisateur** : des **LED plus tard, probablement** (une par pas) ; montage **carte perforée / fils directs d'abord, puis circuit imprimé sur mesure** ; complexité en composants : **peu importe, le plus robuste**.
 * **Décision : 4 registres à décalage 74HC165 en guirlande** (32 entrées, 3 broches : chargement `PL`, horloge `CP`, sortie `Q7`).
@@ -147,11 +147,15 @@ Question de l'utilisateur : le 128 x 64 monochrome reste petit ; un écran IPS �
 * **Prochaines étapes — À FAIRE APRÈS LA REVUE COMPLÈTE (décision de l'utilisateur, 10/10/2026 : rien n'est installé ni lancé avant la fin de l'examen de tous les sujets ; elles sont reprises dans P0 plus bas)** : (1) installer PlatformIO (`brew install platformio`, ou `pip install platformio`) ; (2) écrire `platformio.ini` (carte `teensy41`, `build_src_filter` sur `core/` et `platform/teensy/`, options `-std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wdouble-promotion`) ; (3) **compiler `core/` pour le Cortex-M7** avec un programme minimal (aucune carte nécessaire) et corriger les surprises de portabilité ; (4) remplacer le `%f` du gain en dB par un format entier ; (5) lire la taille de code et de mémoire de l'éditeur de liens.
 * **Rien à décider maintenant** : l'installation de PlatformIO (demande de confirmation avant de lancer `brew install platformio`) et la correction du `%f` se feront avec le reste de P0.
 
-### T12. Émulateur « mode contraintes » — `à discuter`
+### T12. Émulateur « mode contraintes » — `en attente, avec T2` (10/10/2026)
+* **Décision de l'utilisateur** : **reporté avec T2** (l'horodatage). Le bénéfice dépend de T2, et la mesure sur la carte donnera les vrais chiffres (durée d'une écriture SD, retard réel de lecture des entrées).
+* **Version minimale, si T2 est repris** : un seul réglage dans l'émulateur, un retard et une gigue sur les entrées (de l'ordre de 0 à 15 ms), pour voir jusqu'où l'enregistrement tolère le retard. Le reste viendrait ensuite.
 * **À décider** : blocages de `loop()` simulés (20 ms), gigue et retard des entrées, jauge de charge CPU, limites de mémoire. Objectif : trouver les problèmes de T1 et T2 sur PC avant la carte.
 
-### T13. Qualité du moteur — `à discuter`
-* **À décider** : niveaux de qualité (interpolation linéaire / sans, stéréo / mono, queues 2 / 4) et comment ils se règlent ; limiter la polyphonie en dernier recours (que fait-on si le budget CPU est dépassé : couper une voix, baisser la qualité, afficher un avertissement ?).
+### T13. Qualité du moteur — `en attente : on ne fait rien pour l'instant` (10/10/2026)
+* **Décision de l'utilisateur** : **rien pour l'instant** (ni niveaux de qualité, ni limite de polyphonie, ni réaction automatique). Le problème est noté pour plus tard : on attend de pouvoir **mesurer correctement sur la Teensy** avant de décider quoi que ce soit (T1).
+* **Ce qui est prévu à la place : une série de scénarios de charge croissante**, mesurés sur la carte, pour situer où l'on en est par rapport au budget (2,9 ms par bloc de 128) : environ 20 %, 50 %, 70 %, 90 % et 100 %. Exemples de scénarios (à ajuster) : 8 pistes stéréo avec 40 lectures ; 16 pistes avec 40 lectures ; 16 pistes avec 80 lectures (pire cas actuel) ; avec et sans pitch (interpolation), avec et sans queues de release. On relève pour chacun la moyenne et le pire bloc, et on voit à quel scénario le budget est dépassé. Même série lancée sur le Mac (`tools/bench_engine.cpp` à étendre) pour comparer les deux machines.
+* **Leviers en réserve, à ne considérer qu'après la mesure** (dans cet ordre) : optimisations sans effet audible (enveloppe par segments, approximation de `tanh`) ; queues de release 4 vers 2 ; plus proche voisin au lieu de l'interpolation ; stéréo repliée en mono ; en dernier recours, couper la voix la plus ancienne. Un moteur qui change de qualité tout seul en cours de jeu est écarté.
 
 ### T14. Divers — `décidé` (10/10/2026)
 * **Décisions de l'utilisateur** :
@@ -223,27 +227,10 @@ D'après la page du vendeur (10/10/2026) : Teensy 4.1 déjà configurée avec **
 ## Du plan d'examen au plan d'implémentation (état au 10/10/2026)
 
 ### Sujets : où on en est
-| Décidé | En attente | À discuter |
+| Décidé | En attente (pour plus tard) | À mesurer sur la carte |
 |---|---|---|
-| T3 boutons (74HC165), T4 écran (SSD1309, SPI, pilote maison), T6 samples (arène, lecteur par morceaux...), T7 profil (binaire partout), T18 carte (Teensy 4.1), T16 télécommande (principe), T9 sortie jack (PCM5102A) | T2 horodatage, T5 BPM | T1 CPU (à mesurer), T8 fréquence, T9 démarrage et bruit, T10 carte SD, T11 compilation ARM, T12 émulateur « contraintes », T13 qualité du moteur, T14 divers, T15 MIDI, T17 flash 256 Mo |
+| T4 écran (SSD1309, SPI, pilote maison), T6 samples (arène, lecteur par morceaux), T7 profil (binaire partout), T9 audio (PCM5102A, XSMT, ordre d'init), T10 carte SD (reprise, FAT32), T11 PlatformIO, T14 divers (journal sur la carte), T16 télécommande (principe), T17 pas de flash, T18 Teensy 4.1, T19 alimentation USB / chargeur | T3 boutons (conception faite, 74HC165, réalisation reportée), T2 horodatage, T5 BPM, T8 fréquence, T12 émulateur contraintes, T13 qualité du moteur, T15 MIDI | T1 CPU (série de scénarios de T13) |
 
-**Rien de ce qui suit n'est lancé tant que la revue complète des sujets (T1 à T19) n'est pas terminée.** Ce sont les tâches à faire ensuite, dans cet ordre de principe.
+**La revue de tous les sujets est terminée (10/10/2026).**
 
-### P0 : travail sans matériel (sur le Mac), tiré des décisions
-1. **Profil binaire (T7)** : `BinaryCodec` dans `core/` (enregistrements balisés, valeurs par défaut absentes, étiquettes inconnues sautées, CRC32), interface de flux `ByteSource` / `ByteSink`, `FileProfileStore` de l'émulateur en binaire, outil `tools/profile_tool` (binaire vers JSON, JSON vers binaire), tests (aller-retour, fichier tronqué, CRC faux, fuzz, pire cas).
-2. **Samples (T6)** : lecture d'en-tête seule ; lecteur WAV par morceaux (interface commune) ; `SampleArena` dans `core/` (curseur remis à zéro à l'ouverture d'une loop) ; confirmation du moteur après `ClearAll` (compteur dans `EngineState`) avant la remise à zéro ; partage des samples identiques ; zone d'écoute séparée et tronquée ; `SampleLibrary` pensée avec des chemins relatifs (dossiers : plus tard).
-3. **Écran (T4)** : fonction « afficher ce `Canvas` » isolée côté plateforme (le pilote SSD1309 lui-même est du code Teensy, P1).
-4. **Télécommande (T16)** : protocole d'événements (type, index, valeur) et option « envoyer à la Teensy » dans l'émulateur (série ou MIDI USB à trancher).
-5. **Chaîne de compilation PlatformIO (T11, décidé)** : (a) installer PlatformIO, après confirmation (`brew install platformio` ; téléchargement de la plateforme Teensy, Teensyduino 1.62 et du compilateur ARM dans `~/.platformio`) ; (b) écrire `platformio.ini` (carte `teensy41`, `build_src_filter` sur `core/` et `platform/teensy/`, options `-std=gnu++17 -fno-exceptions -fno-rtti -O2 -Wdouble-promotion`) ; (c) **compiler `core/` pour le Cortex-M7** avec un programme minimal, sans carte, et corriger les surprises de portabilité ; (d) remplacer le `%f` du gain en dB (`snprintf("%+.0fdB")`) par un format entier ; (e) lire la taille du code et de la mémoire utilisée, d'après la sortie de l'éditeur de liens.
-6. **À préciser par les sujets restants** : banc d'essai CPU (fait : `tools/bench_engine.cpp`), émulateur avec contraintes (T12).
-
-### P1 : mise en route sur la carte (une inconnue à la fois)
-1. Clignotement et liaison série.
-2. Écran seul : motif de test, puis `UiController` qui dessine le `Canvas`.
-3. Audio : sortie par USB audio d'abord (aucun matériel en plus), puis le module PCM5102A ; pattern fixe avec quelques samples en mémoire ; **mesure du CPU** (T1) ; réévaluation éventuelle du choix de la carte.
-4. Télécommande USB depuis l'émulateur.
-5. Carte SD : samples (lecteur par morceaux, arène en PSRAM) et profil binaire.
-6. Ensuite seulement : boutons (T3), MIDI (T15), flash (T17), horodatage (T2), BPM (T5).
-
-### P2 : intégration et essais
-Utilisation complète sur la carte, retouches, réglage de la compensation de latence, mesure de la charge sur de vraies loops.
+**Les tâches (anciennement P0, P1, P2) sont maintenant dans `backlog.md`**, avec leur état, leurs priorités, leurs dépendances et des références vers les sections de ce fichier. Phases : `phase-0` (sans matériel, sur le Mac), `phase-1` (mise en route sur la carte, une inconnue à la fois), `phase-2` (intégration et essais). Ce fichier garde les décisions ; le backlog garde les tâches et leur état.

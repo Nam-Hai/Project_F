@@ -5,6 +5,7 @@
 #include "../../config.h"
 #include "../command.h"
 #include "../engine_state.h"
+#include "../hit.h"
 #include "../profile/profile_data.h"
 #include "../profile/profile_store.h"
 #include "canvas.h"
@@ -13,8 +14,7 @@
 
 // Logique de l'interface : reçoit des InputEvent, envoie des Command, dessine dans un Canvas.
 // Portable (PC et Teensy) : tableaux de taille fixe, pas d'allocation, aucune dépendance graphique.
-// L'objet pèse une vingtaine de Ko (il contient le profil et sa copie de sécurité) : à déclarer
-// static ou global sur Teensy.
+// L'objet pèse plus de 100 Ko (il contient le profil) : à déclarer static ou global sur Teensy.
 //
 // L'UI garde sa propre copie du modèle (pistes, patterns, profil) : elle est la seule à les
 // modifier, donc elle n'a pas besoin de relire l'état du thread audio.
@@ -22,8 +22,9 @@
 // Vues :
 //   Tracks  - liste des pistes + « Ajouter piste ». En montant au-dessus de la première piste, la
 //             ligne de titre devient sélectionnable : Menu y ouvre le menu de la loop.
-//   Pattern - les 16 pas de la piste choisie, en trois modes (bouton Mode) : Edit (un pas bascule),
-//             Velocity et Pitch (un pas se sélectionne, la roue règle sa valeur)
+//   Pattern - les 16 pas de la piste choisie, en quatre modes (bouton Mode) : Edit (un pas bascule),
+//             Velocity, Pitch et Timing (un pas se sélectionne, la roue règle sa valeur, pour toutes
+//             les notes du pas ensemble)
 //   Add     - « Samples » : crée une piste, ou remplace le sample d'une piste ; le sample survolé
 //             est joué en écoute après un court délai
 //   Menu    - menu contextuel (voir MenuKind)
@@ -36,7 +37,7 @@ class UiController {
 public:
     enum class View : uint8_t { Tracks, Pattern, Add, Menu, Loops, Keyboard };
     enum class MenuKind : uint8_t { Track, Loop, LoopItem };
-    enum class EditMode : uint8_t { Edit, Velocity, Pitch };
+    enum class EditMode : uint8_t { Edit, Velocity, Pitch, Timing };
 
     static constexpr int NAME_LEN      = 19;   // caractères du nom affiché (sans « .wav »)
     static constexpr int LIST_ROWS     = 7;    // lignes de liste sous l'en-tête
@@ -47,6 +48,8 @@ public:
     static constexpr uint32_t PREVIEW_DELAY_MS  = 150;   // la roue doit s'arrêter avant l'écoute
     static constexpr int      KEYBOARD_VELOCITY  = 127;    // les boutons n'ont pas de force de frappe
     static constexpr int      VELOCITY_PER_NOTCH = 4;    // vélocité : 4 points par cran de roue
+    static constexpr int      OFFSET_PER_NOTCH   = 2;    // décalage : 2/128 de pas par cran de roue
+    static constexpr int      QUANTIZE_PER_NOTCH = 5;    // force de quantification : 5 % par cran de roue
     static constexpr uint32_t AUDITION_MIN_MS    = 60;   // une note d'essai au plus toutes les 60 ms
 
     // `library` et `store` peuvent être nuls : les fonctions qui en dépendent ne font alors rien.
@@ -94,6 +97,11 @@ public:
     uint16_t pattern_bits(int track) const { return tracks_[track].pattern; }
     int      step_velocity(int track, int step) const { return tracks_[track].step_velocity[step]; }
     int      step_pitch(int track, int step) const { return tracks_[track].step_pitch[step]; }
+    int      step_offset(int track, int step) const { return tracks_[track].step_offset[step]; }
+    int      extra_count(int track, int step) const { return tracks_[track].extra_count[step]; }
+    Hit      extra_hit(int track, int step, int i) const { return tracks_[track].extra[step][i]; }
+    int      quantize(int track) const { return tracks_[track].quantize; }
+    bool     editing_quantize() const { return quantize_edit_; }
     const char* track_name(int track) const { return tracks_[track].name; }
     const char* track_file(int track) const { return tracks_[track].file; }
     bool     error_shown() const { return static_cast<int32_t>(error_until_ - now_ms_) > 0; }
@@ -118,6 +126,12 @@ private:
         uint8_t  step_velocity[cfg::MAX_STEPS] = {127, 127, 127, 127, 127, 127, 127, 127,
                                              127, 127, 127, 127, 127, 127, 127, 127};
         int8_t   step_pitch[cfg::MAX_STEPS]    = {};
+        // Micro-timing : décalage de la note principale (1/128 de pas), notes supplémentaires du pas
+        // (roulements), force de quantification de la piste (0..100 %).
+        int8_t   step_offset[cfg::MAX_STEPS]   = {};
+        uint8_t  extra_count[cfg::MAX_STEPS]   = {};
+        Hit      extra[cfg::MAX_STEPS][cfg::MAX_EXTRA_HITS];
+        uint8_t  quantize           = 0;
         float    gain               = 1.0f;
         float    pitch              = 1.0f;
         uint32_t last_triggers      = 0;
@@ -140,6 +154,8 @@ private:
     void on_menu();
     void on_mode();
     void adjust_step_value(int delta);
+    bool shift_step_notes(Track& t, int step, int delta);
+    void adjust_quantize(int delta);
     void audition_selected_step();
     void on_play();
     void on_black(int index);
@@ -221,10 +237,10 @@ private:
     View     menu_origin_ = View::Tracks;  // vue à laquelle le menu rend la main
     int      menu_cursor_ = 0;
     bool     confirm_     = false;  // une action destructrice attend sa seconde validation
+    bool     quantize_edit_ = false;  // menu de la piste : la roue règle la force de quantification
 
     // Profil et loop courante.
     profile::ProfileData profile_;
-    profile::ProfileData backup_;       // copie prise avant une modification, pour revenir en arrière
     int  current_loop_ = -1;
     bool dirty_        = false;
     int  loops_cursor_ = 0;

@@ -137,6 +137,10 @@ void UiController::on_wheel(int delta) {
             }
             break;
         case View::Menu: {
+            if (quantize_edit_) {
+                adjust_quantize(delta);
+                break;
+            }
             int unused = 0;
             move_in_list(menu_cursor_, unused, menu_item_count(), delta);
             confirm_ = false;
@@ -298,7 +302,8 @@ void UiController::on_back() {
             leave_add();
             break;
         case View::Menu:
-            close_menu();
+            if (quantize_edit_) quantize_edit_ = false;  // d'abord sortir du réglage
+            else close_menu();
             break;
         case View::Loops:
             confirm_ = false;
@@ -341,51 +346,106 @@ void UiController::on_menu() {
     }
 }
 
-// Mode : Edit -> Velocity -> Pitch -> Edit, dans la vue Pattern seulement.
+// Mode : Edit -> Velocity -> Pitch -> Timing -> Edit, dans la vue Pattern seulement.
 void UiController::on_mode() {
     if (view_ != View::Pattern) return;
     switch (edit_mode_) {
         case EditMode::Edit:     edit_mode_ = EditMode::Velocity; break;
         case EditMode::Velocity: edit_mode_ = EditMode::Pitch; break;
-        case EditMode::Pitch:    edit_mode_ = EditMode::Edit; break;
+        case EditMode::Pitch:    edit_mode_ = EditMode::Timing; break;
+        case EditMode::Timing:   edit_mode_ = EditMode::Edit; break;
     }
     audition_pending_ = false;
 }
 
-// La roue règle la vélocité ou le pitch du pas sélectionné (s'il est joué), borné, puis joue la note.
+// La roue règle la vélocité, le pitch ou le décalage du pas sélectionné (s'il est joué), puis joue la note.
 void UiController::adjust_step_value(int delta) {
     if (edit_mode_ == EditMode::Edit || step_cursor_ < 0) return;
 
-    Track& t    = tracks_[selected_];
-    const int s = step_cursor_;
-    if (!((t.pattern >> s) & 1u)) return;
+    Track& t = tracks_[selected_];
+    if (!((t.pattern >> step_cursor_) & 1u)) return;
+    if (!shift_step_notes(t, step_cursor_, delta)) return;
+
+    mark_dirty();
+    audition_pending_ = true;
+    audition_selected_step();
+}
+
+// Ajoute `delta` crans à la valeur du mode courant pour toutes les notes du pas (la principale et les
+// notes supplémentaires). Le même écart est appliqué à toutes, borné pour qu'aucune ne sorte de ses
+// limites : un roulement garde ainsi ses écarts. false si rien n'a changé.
+bool UiController::shift_step_notes(Track& t, int s, int delta) {
+    int lo = 0, hi = 0, per = 1;
+    switch (edit_mode_) {
+        case EditMode::Velocity: lo = cfg::VELOCITY_MIN;   hi = cfg::VELOCITY_MAX;   per = VELOCITY_PER_NOTCH; break;
+        case EditMode::Pitch:    lo = cfg::STEP_PITCH_MIN; hi = cfg::STEP_PITCH_MAX; per = 1; break;
+        case EditMode::Timing:   lo = cfg::OFFSET_MIN;     hi = cfg::OFFSET_MAX;     per = OFFSET_PER_NOTCH; break;
+        case EditMode::Edit:     return false;
+    }
+    auto value = [&](int n) -> int {  // n = 0 : note principale ; n >= 1 : note supplémentaire n
+        if (n == 0) {
+            return edit_mode_ == EditMode::Velocity ? t.step_velocity[s] : edit_mode_ == EditMode::Pitch ? t.step_pitch[s] : t.step_offset[s];
+        }
+        const Hit& h = t.extra[s][n - 1];
+        return edit_mode_ == EditMode::Velocity ? h.velocity : edit_mode_ == EditMode::Pitch ? h.pitch : h.offset;
+    };
+
+    const int notes = 1 + t.extra_count[s];
+    int       d     = delta * per;
+    for (int n = 0; n < notes; ++n) {
+        const int v = value(n);
+        if (d < lo - v) d = lo - v;
+        if (d > hi - v) d = hi - v;
+    }
+    if (d == 0) return false;
 
     Command c;
     c.track = t.engine_track;
     c.step  = static_cast<uint8_t>(s);
+    c.type  = edit_mode_ == EditMode::Velocity ? Command::SetStepVelocity
+            : edit_mode_ == EditMode::Pitch    ? Command::SetStepPitch
+                                               : Command::SetStepOffset;
+    c.value = static_cast<float>(value(0) + d);
+    if (!sink_.push(c)) return false;
+    if (edit_mode_ == EditMode::Velocity)   t.step_velocity[s] = static_cast<uint8_t>(t.step_velocity[s] + d);
+    else if (edit_mode_ == EditMode::Pitch) t.step_pitch[s]    = static_cast<int8_t>(t.step_pitch[s] + d);
+    else                                    t.step_offset[s]   = static_cast<int8_t>(t.step_offset[s] + d);
 
-    if (edit_mode_ == EditMode::Velocity) {
-        int v = t.step_velocity[s] + delta * VELOCITY_PER_NOTCH;
-        if (v < cfg::VELOCITY_MIN) v = cfg::VELOCITY_MIN;
-        if (v > cfg::VELOCITY_MAX) v = cfg::VELOCITY_MAX;
-        if (v == t.step_velocity[s]) return;
-        c.type  = Command::SetStepVelocity;
-        c.value = static_cast<float>(v);
-        if (!sink_.push(c)) return;
-        t.step_velocity[s] = static_cast<uint8_t>(v);
-    } else {
-        int v = t.step_pitch[s] + delta;
-        if (v < cfg::STEP_PITCH_MIN) v = cfg::STEP_PITCH_MIN;
-        if (v > cfg::STEP_PITCH_MAX) v = cfg::STEP_PITCH_MAX;
-        if (v == t.step_pitch[s]) return;
-        c.type  = Command::SetStepPitch;
-        c.value = static_cast<float>(v);
-        if (!sink_.push(c)) return;
-        t.step_pitch[s] = static_cast<int8_t>(v);
+    for (int n = 1; n < notes; ++n) {
+        Hit h = t.extra[s][n - 1];
+        if (edit_mode_ == EditMode::Velocity)   h.velocity = static_cast<uint8_t>(h.velocity + d);
+        else if (edit_mode_ == EditMode::Pitch) h.pitch    = static_cast<int8_t>(h.pitch + d);
+        else                                    h.offset   = static_cast<int8_t>(h.offset + d);
+
+        Command e;
+        e.type   = Command::SetExtraHit;
+        e.track  = t.engine_track;
+        e.step   = static_cast<uint8_t>(s);
+        e.slot   = static_cast<uint8_t>(n);
+        e.offset = h.offset;
+        e.value  = static_cast<float>(h.velocity);
+        e.pitch  = h.pitch;
+        if (!sink_.push(e)) break;  // file pleine : le modèle suit ce que le moteur a reçu
+        t.extra[s][n - 1] = h;
     }
+    return true;
+}
+
+// Menu de la piste, ligne « Quantifier » : la force de quantification change à la roue, par pas de 5 %.
+void UiController::adjust_quantize(int delta) {
+    Track& t = tracks_[selected_];
+    int    q = t.quantize + delta * QUANTIZE_PER_NOTCH;
+    if (q < 0) q = 0;
+    if (q > cfg::QUANTIZE_MAX) q = cfg::QUANTIZE_MAX;
+    if (q == t.quantize) return;
+
+    Command c;
+    c.type  = Command::SetTrackQuantize;
+    c.track = t.engine_track;
+    c.value = static_cast<float>(q);
+    if (!sink_.push(c)) return;
+    t.quantize = static_cast<uint8_t>(q);
     mark_dirty();
-    audition_pending_ = true;
-    audition_selected_step();
 }
 
 // Joue la note du pas sélectionné, une fois toutes les AUDITION_MIN_MS au plus. Si la cadence la
@@ -512,16 +572,18 @@ void UiController::open_menu(MenuKind kind) {
     menu_origin_ = view_;
     menu_cursor_ = 0;
     confirm_     = false;
+    quantize_edit_ = false;
     view_        = View::Menu;
 }
 
 void UiController::close_menu() {
-    confirm_ = false;
+    confirm_       = false;
+    quantize_edit_ = false;
     view_    = menu_origin_;
 }
 
 int UiController::menu_item_count() const {
-    return menu_kind_ == MenuKind::LoopItem ? 2 : 3;
+    return menu_kind_ == MenuKind::LoopItem ? 2 : menu_kind_ == MenuKind::Track ? 4 : 3;
 }
 
 void UiController::on_menu_ok() {
@@ -530,6 +592,8 @@ void UiController::on_menu_ok() {
             if (menu_cursor_ == 0) {
                 if (library_ && library_->count() > 0) open_add(true);
             } else if (menu_cursor_ == 1) {
+                quantize_edit_ = !quantize_edit_;  // Valider entre dans le réglage, puis le confirme
+            } else if (menu_cursor_ == 2) {
                 if (confirm_) delete_selected();
                 else confirm_ = true;  // première validation : on demande confirmation
             } else {
@@ -617,7 +681,7 @@ void UiController::load_loop(int slot) {
     }
 
     // Numéro de la première commande de chaque piste : ClearAll et SetBpm d'abord, puis pour chaque
-    // piste 4 commandes de base et une par réglage de pas qui n'est pas la valeur par défaut.
+    // piste 4 commandes de base et une par réglage qui n'est pas la valeur par défaut (voir count_extras).
     int next_cmd = 2;
     for (int k = 0; k < plan_count_; ++k) {
         PlannedTrack& p = plan_[k];
@@ -631,8 +695,15 @@ void UiController::load_loop(int slot) {
     for (Track& t : tracks_) t = Track{};
     for (int k = 0; k < plan_count_; ++k) {
         const profile::TrackData& td = loop.tracks[plan_[k].loop_track];
-        add_track(profile_.samples[td.sample], static_cast<uint8_t>(k), td.pattern, td.gain, td.pitch,
-                  td.step_velocity, td.step_pitch);
+        const int index = add_track(profile_.samples[td.sample], static_cast<uint8_t>(k), td.pattern, td.gain, td.pitch,
+                                    td.step_velocity, td.step_pitch);
+        Track& t        = tracks_[index];
+        t.quantize      = td.quantize;
+        for (int st = 0; st < cfg::MAX_STEPS; ++st) {
+            t.step_offset[st] = td.step_offset[st];
+            t.extra_count[st] = td.extra_count[st];
+            for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[st][e] = td.extra[st][e];
+        }
     }
 
     bpm_          = static_cast<int>(std::lround(loop.bpm));
@@ -657,23 +728,29 @@ void UiController::load_loop(int slot) {
     }
 }
 
-// Nombre de réglages de pas qui s'écartent de la valeur par défaut (vélocité 127, pitch 0).
+// Nombre de commandes de réglage d'une piste en plus des 4 de base : une par vélocité, pitch ou décalage
+// qui s'écarte de la valeur par défaut, une par note supplémentaire, une pour la quantification si elle
+// n'est pas nulle.
 int UiController::count_extras(const profile::TrackData& td) {
-    int n = 0;
+    int n = td.quantize != 0;
     for (int s = 0; s < cfg::MAX_STEPS; ++s) {
         n += td.step_velocity[s] != cfg::VELOCITY_MAX;
         n += td.step_pitch[s] != 0;
+        n += td.step_offset[s] != 0;
+        n += td.extra_count[s];
     }
     return n;
 }
 
-// La `index`-ième commande de réglage de pas d'une piste : d'abord les vélocités, puis les pitchs.
+// La `index`-ième commande de réglage d'une piste : les vélocités, puis les pitchs, les décalages, les notes
+// supplémentaires (pas par pas) et enfin la quantification.
 bool UiController::extra_command(const profile::TrackData& td, int index, int track, Command& c) {
+    c.track = static_cast<uint8_t>(track);
+
     for (int s = 0; s < cfg::MAX_STEPS; ++s) {
         if (td.step_velocity[s] == cfg::VELOCITY_MAX) continue;
         if (index-- == 0) {
             c.type  = Command::SetStepVelocity;
-            c.track = static_cast<uint8_t>(track);
             c.step  = static_cast<uint8_t>(s);
             c.value = static_cast<float>(td.step_velocity[s]);
             return true;
@@ -683,17 +760,43 @@ bool UiController::extra_command(const profile::TrackData& td, int index, int tr
         if (td.step_pitch[s] == 0) continue;
         if (index-- == 0) {
             c.type  = Command::SetStepPitch;
-            c.track = static_cast<uint8_t>(track);
             c.step  = static_cast<uint8_t>(s);
             c.value = static_cast<float>(td.step_pitch[s]);
             return true;
         }
     }
+    for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+        if (td.step_offset[s] == 0) continue;
+        if (index-- == 0) {
+            c.type  = Command::SetStepOffset;
+            c.step  = static_cast<uint8_t>(s);
+            c.value = static_cast<float>(td.step_offset[s]);
+            return true;
+        }
+    }
+    for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+        for (int e = 0; e < td.extra_count[s]; ++e) {
+            if (index-- != 0) continue;
+            const Hit& h = td.extra[s][e];
+            c.type       = Command::SetExtraHit;
+            c.step       = static_cast<uint8_t>(s);
+            c.slot       = static_cast<uint8_t>(e + 1);
+            c.offset     = h.offset;
+            c.value      = static_cast<float>(h.velocity);
+            c.pitch      = h.pitch;
+            return true;
+        }
+    }
+    if (td.quantize != 0 && index == 0) {
+        c.type  = Command::SetTrackQuantize;
+        c.value = static_cast<float>(td.quantize);
+        return true;
+    }
     return false;
 }
 
 // Commande numéro `index` du chargement : ClearAll, SetBpm, puis pour chaque piste 4 commandes de
-// base (sample, gain, pitch, pattern) et un SetStepVelocity / SetStepPitch par réglage de pas.
+// base (sample, gain, pitch, pattern), puis une commande par réglage de pas (voir extra_command).
 bool UiController::next_load_command(int index, Command& c) const {
     if (index < 0 || index >= load_total_) return false;
 
@@ -785,7 +888,11 @@ bool UiController::build_loop(profile::LoopData& out) {
         for (int s = 0; s < cfg::MAX_STEPS; ++s) {
             td.step_velocity[s] = t.step_velocity[s];
             td.step_pitch[s]    = t.step_pitch[s];
+            td.step_offset[s]   = t.step_offset[s];
+            td.extra_count[s]   = t.extra_count[s];
+            for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) td.extra[s][e] = t.extra[s][e];
         }
+        td.quantize = t.quantize;
     }
     return true;
 }
@@ -802,38 +909,34 @@ void UiController::save_loop() {
         return;
     }
 
-    backup_ = profile_;  // pour revenir en arrière si quelque chose échoue
+    // Le profil en mémoire peut avoir une longueur d'avance sur le disque : si l'écriture échoue, la loop
+    // reste à son emplacement (`dirty_` reste vrai) et un nouvel essai réécrit simplement tout le profil.
+    profile_.compact_samples();  // avant d'ajouter : une table « pleine » l'est vraiment
     profile::LoopData loop;
     if (!build_loop(loop)) {
-        profile_ = backup_;
         notify(" Trop de samples");
         return;
     }
     profile_.loops[slot] = loop;
     if (slot == profile_.loop_count) ++profile_.loop_count;
+    current_loop_ = slot;
+    dirty_        = true;
     profile_.compact_samples();
 
     if (!store_->save(profile_)) {
-        profile_ = backup_;
         notify(" Echec sauvegarde");
         return;
     }
-    current_loop_ = slot;
-    dirty_        = false;
+    dirty_ = false;
     notify(" Loop sauvegardee");
 }
 
 void UiController::delete_loop(int slot) {
     if (!store_ || slot < 0 || slot >= profile_.loop_count) return;
 
-    backup_ = profile_;
     profile_.remove_loop(slot);
     profile_.compact_samples();
-    if (!store_->save(profile_)) {
-        profile_ = backup_;
-        notify(" Echec sauvegarde");
-        return;
-    }
+    const bool saved = store_->save(profile_);
 
     // La loop courante garde son contenu dans la machine, mais n'a plus d'emplacement.
     if (current_loop_ == slot) {
@@ -845,7 +948,7 @@ void UiController::delete_loop(int slot) {
     const int items = profile_.loop_count + 1;
     if (loops_cursor_ > items - 1) loops_cursor_ = items - 1;
     reveal(loops_cursor_, loops_scroll_);
-    notify(" Loop supprimee");
+    notify(saved ? " Loop supprimee" : " Echec sauvegarde");
 }
 
 // ============================================================================================
@@ -927,7 +1030,7 @@ void UiController::render(Canvas& c) const {
         case View::Pattern: {
             // Le mode en haut à droite : une lettre, E, V ou P. Elle se place à gauche du BPM : le titre
             // est donc coupé à 13 caractères dans cette vue.
-            const char letter = edit_mode_ == EditMode::Edit ? 'E' : edit_mode_ == EditMode::Velocity ? 'V' : 'P';
+            const char letter = edit_mode_ == EditMode::Edit ? 'E' : edit_mode_ == EditMode::Velocity ? 'V' : edit_mode_ == EditMode::Pitch ? 'P' : 'T';
             render_header(c, tracks_[selected_].name, false, letter, 13);
             render_pattern(c);
             break;
@@ -1030,18 +1133,26 @@ void UiController::render_pattern(Canvas& c) const {
         const int  x  = i * 8;
         const bool on = (t.pattern >> i) & 1u;
 
-        if (edit_mode_ == EditMode::Edit || !on) {
-            c.rect(x, Y, 7, 7, on && edit_mode_ == EditMode::Edit);  // plein = joué, contour = silence
+        // Un pas joué est dessiné décalé de son micro-timing (3 pixels au plus) ; un pas éteint reste sur la grille.
+        const int o  = t.step_offset[i];
+        const int bx = x + (on ? (o * 3 + (o < 0 ? -32 : 32)) / 64 : 0);
+
+        if (edit_mode_ == EditMode::Edit || edit_mode_ == EditMode::Timing || !on) {
+            c.rect(bx, Y, 7, 7, on && edit_mode_ != EditMode::Velocity && edit_mode_ != EditMode::Pitch);  // plein = joué, contour = silence
         } else if (edit_mode_ == EditMode::Velocity) {
-            c.rect(x, Y, 7, 7, false);
+            c.rect(bx, Y, 7, 7, false);
             const int rows = 1 + ((t.step_velocity[i] - cfg::VELOCITY_MIN) * 4 + 63) / 126;  // 1..5
-            c.rect(x + 1, Y + 6 - rows, 5, rows, true);
+            c.rect(bx + 1, Y + 6 - rows, 5, rows, true);
         } else {
-            c.rect(x, Y, 7, 7, false);
+            c.rect(bx, Y, 7, 7, false);
             const int p    = t.step_pitch[i];
             const int rows = ((p < 0 ? -p : p) * 2 + 6) / 12;  // 0..2
-            if (p >= 0) c.rect(x + 1, Y + 3 - rows, 5, rows + 1, true);  // la ligne centrale, plus vers le haut
-            else        c.rect(x + 1, Y + 3, 5, rows + 1, true);         // la ligne centrale, plus vers le bas
+            if (p >= 0) c.rect(bx + 1, Y + 3 - rows, 5, rows + 1, true);  // la ligne centrale, plus vers le haut
+            else        c.rect(bx + 1, Y + 3, 5, rows + 1, true);         // la ligne centrale, plus vers le bas
+        }
+        // Un pas à plusieurs notes (roulement) : un petit point par note sous la boîte.
+        if (on) {
+            for (int n = 0; n < t.extra_count[i] + 1 && t.extra_count[i] > 0; ++n) c.set_pixel(x + 2 * n, Y + 8);
         }
 
         if (i % 4 == 0) c.vline(x + 3, Y - 6, 3);            // repère de temps tous les 4 pas
@@ -1071,6 +1182,18 @@ void UiController::render_pattern(Canvas& c) const {
             const int fill = 1 + (v - cfg::VELOCITY_MIN) * (GAUGE_W - 3) / (cfg::VELOCITY_MAX - cfg::VELOCITY_MIN);
             c.rect(1, GAUGE_Y + 1, fill, 5, true);
             std::snprintf(value, sizeof value, "%d", v);
+        } else if (edit_mode_ == EditMode::Timing) {
+            // Du centre : vers la droite pour une note en retard, vers la gauche pour une note en avance.
+            // 3/4 de pixel par graduation : 48 pixels pour 64 (50 % d'un pas).
+            const int o      = t.step_offset[step_cursor_];
+            const int center = GAUGE_W / 2;
+            const int cols   = ((o < 0 ? -o : o) * 3 + 2) / 4;
+            if (o > 0) c.rect(center + 1, GAUGE_Y + 1, cols, 5, true);
+            else if (o < 0) c.rect(center - cols, GAUGE_Y + 1, cols, 5, true);
+            c.vline(center, GAUGE_Y - 1, 9);
+            const int pct = static_cast<int>(std::lround(o * 100.0 / cfg::OFFSET_UNITS));
+            if (pct == 0) std::snprintf(value, sizeof value, "0");
+            else          std::snprintf(value, sizeof value, "%+d%%", pct);
         } else {
             // Du centre : vers la droite pour un pitch positif, vers la gauche pour un pitch négatif.
             // Un trait dépassant la jauge marque le 0.
@@ -1111,13 +1234,18 @@ void UiController::render_add(Canvas& c) const {
 // Menus : piste (changer le sample / supprimer / annuler), loop (charger / sauvegarder / annuler),
 // loop de la liste (supprimer / annuler). Les actions destructrices demandent une confirmation.
 void UiController::render_menu(Canvas& c) const {
-    const char* labels[3];
+    const char* labels[4];
+    char        quantize_label[24];
     int         count = 3;
     switch (menu_kind_) {
         case MenuKind::Track:
+            std::snprintf(quantize_label, sizeof quantize_label, quantize_edit_ ? " Quantifier <%d%%>" : " Quantifier %d%%",
+                          tracks_[selected_].quantize);
             labels[0] = " Changer le sample";
-            labels[1] = confirm_ ? " Confirmer ?" : " Supprimer la piste";
-            labels[2] = " Annuler";
+            labels[1] = quantize_label;
+            labels[2] = confirm_ ? " Confirmer ?" : " Supprimer la piste";
+            labels[3] = " Annuler";
+            count     = 4;
             break;
         case MenuKind::Loop:
             labels[0] = " Charger une loop";

@@ -632,21 +632,22 @@ int main() {
         auto f = make();
         f->ui.add_track("Kick1.wav", 0, 0x0001);
 
-        // Sauvegarde qui échoue : rien ne change dans le profil de l'UI.
+        // Sauvegarde qui échoue : la loop reste en mémoire, non sauvegardée (`*`), prête pour un nouvel essai.
         f->store.fail_save = true;
         f->feed({InputEvent::wheel(-1), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok()});
-        CHECK(f->ui.current_loop() == -1 && f->ui.profile().loop_count == 0 && f->ui.profile().sample_count == 0 &&
+        CHECK(f->ui.current_loop() == 0 && f->ui.dirty() && f->ui.profile().loop_count == 1 && f->store.file.loop_count == 0 &&
                   std::strcmp(f->ui.notice(), " Echec sauvegarde") == 0,
-              "échec d'écriture : profil de l'UI inchangé, message");
+              "échec d'écriture : loop gardée en mémoire, non sauvegardée, message");
         f->store.fail_save = false;
-        f->feed({InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok()});
-        CHECK(f->ui.current_loop() == 0 && f->store.file.loop_count == 1, "la sauvegarde suivante fonctionne");
+        f->feed({InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
+        CHECK(f->ui.current_loop() == 0 && !f->ui.dirty() && f->ui.profile().loop_count == 1 && f->store.file.loop_count == 1,
+              "le nouvel essai réécrit le profil sans doublon");
 
         // Suppression qui échoue.
         f->store.fail_save = true;
         f->feed({InputEvent::ok(), InputEvent::menu(), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->ui.profile().loop_count == 1 && f->store.file.loop_count == 1 && std::strcmp(f->ui.notice(), " Echec sauvegarde") == 0,
-              "suppression échouée : la loop est toujours là");
+        CHECK(f->ui.profile().loop_count == 0 && f->store.file.loop_count == 1 && std::strcmp(f->ui.notice(), " Echec sauvegarde") == 0,
+              "suppression échouée : retirée de la mémoire, encore sur le disque, message");
         f->store.fail_save = false;
     }
     {

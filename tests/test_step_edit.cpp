@@ -138,7 +138,9 @@ int main() {
         f->feed({InputEvent::mode()});
         CHECK(f->ui.edit_mode() == Mode::Pitch, "Velocity -> Pitch");
         f->feed({InputEvent::mode()});
-        CHECK(f->ui.edit_mode() == Mode::Edit, "Pitch -> Edit");
+        CHECK(f->ui.edit_mode() == Mode::Timing, "Pitch -> Timing");
+        f->feed({InputEvent::mode()});
+        CHECK(f->ui.edit_mode() == Mode::Edit, "Timing -> Edit");
         CHECK(f->sink.sent.empty() && !f->ui.dirty(), "changer de mode n'envoie rien et ne modifie pas la loop");
 
         // Le mode est conservé quand on passe par le menu, remis à Edit à chaque ouverture du pattern.
@@ -227,7 +229,7 @@ int main() {
         CHECK(f->sink.sent.empty(), "déjà à -12 : rien");
 
         // Valeurs conservées d'un mode à l'autre ; la roue ne fait rien en Edit.
-        f->feed({InputEvent::mode()});
+        f->feed({InputEvent::mode(), InputEvent::mode()});
         CHECK(f->ui.edit_mode() == Mode::Edit && f->ui.step_pitch(0, 8) == -12, "retour en Edit : valeur conservée");
         f->tick(100);
         f->feed({InputEvent::wheel(2)});
@@ -241,12 +243,12 @@ int main() {
         CHECK(f->sink.sent.empty(), "aucun pas sélectionné : la roue ne fait rien");
 
         f->feed({InputEvent::step(4)});
-        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::step(4)});  // Pitch, Edit, puis Edit : éteint le pas 4
+        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::mode(), InputEvent::step(4)});  // Pitch, Timing, Edit, puis éteint le pas 4
         CHECK(f->ui.pattern_bits(0) == 0x1101, "le pas 4 est éteint en Edit");
         f->sink.sent.clear();
         f->feed({InputEvent::mode(), InputEvent::wheel(2)});
         CHECK(f->ui.selected_step() == 4 && f->sink.sent.empty(), "pas sélectionné devenu silencieux : la roue ne fait rien");
-        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::step(4), InputEvent::mode(), InputEvent::wheel(-2)});
+        f->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::mode(), InputEvent::step(4), InputEvent::mode(), InputEvent::wheel(-2)});
         CHECK(f->ui.step_velocity(0, 4) == 119 && f->ui.pattern_bits(0) == 0x1111, "rallumé en Edit : la vélocité se règle de nouveau");
 
         // File de commandes pleine : le modèle reste cohérent avec le moteur.
@@ -281,7 +283,7 @@ int main() {
         f->tick(200);
         CHECK(f->sink.count(Command::AuditionStep) == before, "changement de mode : la note retenue est abandonnée");
 
-        f->feed({InputEvent::mode()});  // Edit
+        f->feed({InputEvent::mode(), InputEvent::mode()});  // Timing, Edit
         f->feed({InputEvent::mode()});  // Velocity
         f->tick(200);
         f->feed({InputEvent::wheel(-1)});
@@ -401,14 +403,14 @@ int main() {
         h->feed({InputEvent::mode(), InputEvent::step(4)});  // Velocity, pas 4 sélectionné
         h->ui.render(c);
         CHECK(gauge(c) > 0, "(jauge présente tant que le pas est joué)");
-        h->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::step(4), InputEvent::mode()});  // Edit : éteint le pas 4, puis Velocity
+        h->feed({InputEvent::mode(), InputEvent::mode(), InputEvent::mode(), InputEvent::step(4), InputEvent::mode()});  // Edit : éteint le pas 4, puis Velocity
         h->ui.render(c);
         ref.clear();
         CHECK(h->ui.selected_step() == 4 && same_rows(c, ref, 48, 64), "pas sélectionné devenu silencieux : plus de jauge");
         h->feed({InputEvent::mode()});  // Pitch
         h->ui.render(c);
         CHECK(same_rows(c, ref, 48, 64), "idem en Pitch");
-        g->feed({InputEvent::mode()});
+        g->feed({InputEvent::mode(), InputEvent::mode()});
         g->feed({InputEvent::step(4)});
         g->ui.render(c);
         CHECK(!value_is(c, "x") && lit(c, 0, 48, 128, 8) > 0, "Edit : le texte « Pas 5 : joue », pas de jauge");

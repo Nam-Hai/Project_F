@@ -4,6 +4,7 @@
 #include <cstring>
 
 #include "../../config.h"
+#include "../hit.h"
 
 // Modèle d'un profil : une collection de loops. Portable, tableaux de taille fixe, aucune allocation.
 //
@@ -28,6 +29,14 @@ struct TrackData {
     // Valeurs de chaque pas (conservées même si le pas est éteint) : vélocité 1..127, pitch -12..12.
     uint8_t step_velocity[16] = {127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127};
     int8_t  step_pitch[16]    = {};
+
+    // Micro-timing : décalage de la note principale de chaque pas (1/128 de pas, -64..63), notes supplémentaires
+    // des pas (roulements : jusqu'à 3 par pas, rangées dans l'ordre du temps) et force de quantification de la
+    // piste (0..100 %).
+    int8_t  step_offset[16]   = {};
+    uint8_t extra_count[16]   = {};
+    Hit     extra[16][cfg::MAX_EXTRA_HITS];
+    uint8_t quantize          = 0;
 };
 
 struct LoopData {

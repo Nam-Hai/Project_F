@@ -211,6 +211,55 @@ ProfileStatus parse_step_list(const Doc& d, int track_obj, const char* key, int 
     return ProfileStatus::Ok;
 }
 
+// Un entier signé dans `s` à partir de `i` (signe + ou - accepté), avancé après les chiffres. false si absent.
+bool read_int(const char* s, int& i, int& out) {
+    int sign = 1;
+    if (s[i] == '-' || s[i] == '+') sign = (s[i++] == '-') ? -1 : 1;
+    if (s[i] < '0' || s[i] > '9') return false;
+    int value = 0;
+    while (s[i] >= '0' && s[i] <= '9') {
+        value = value * 10 + (s[i++] - '0');
+        if (value > 100000) return false;  // bien au-delà de toute borne
+    }
+    out = sign * value;
+    return true;
+}
+
+// « extra_hits » : des entrées « pas:décalage:vélocité:pitch » séparées par des espaces. Chaque entrée est une
+// note supplémentaire du pas, rangée dans l'ordre d'apparition (3 au plus par pas).
+ProfileStatus parse_extra_hits(const Doc& d, int track_obj, TrackData& out) {
+    const int v = find(d, track_obj, "extra_hits");
+    if (v == BROKEN) return ProfileStatus::InvalidJson;
+    if (v == ABSENT) return ProfileStatus::Ok;
+
+    char text[1024];  // 48 notes de 15 caractères au plus, avec leurs espaces
+    if (!as_string(d, v, text, sizeof text)) return ProfileStatus::BadField;
+
+    int i = 0;
+    for (;;) {
+        while (text[i] == ' ') ++i;
+        if (text[i] == '\0') break;
+
+        int step = 0, offset = 0, velocity = 0, pitch = 0;
+        if (!read_int(text, i, step) || text[i++] != ':' || !read_int(text, i, offset) || text[i++] != ':' ||
+            !read_int(text, i, velocity) || text[i++] != ':' || !read_int(text, i, pitch))
+            return ProfileStatus::BadField;
+        if (text[i] != ' ' && text[i] != '\0') return ProfileStatus::BadField;
+
+        if (step < 0 || step >= cfg::MAX_STEPS || offset < cfg::OFFSET_MIN || offset > cfg::OFFSET_MAX ||
+            velocity < cfg::VELOCITY_MIN || velocity > cfg::VELOCITY_MAX || pitch < cfg::STEP_PITCH_MIN ||
+            pitch > cfg::STEP_PITCH_MAX)
+            return ProfileStatus::BadField;
+        if (out.extra_count[step] >= cfg::MAX_EXTRA_HITS) return ProfileStatus::BadField;  // trop de notes dans ce pas
+
+        Hit& h = out.extra[step][out.extra_count[step]++];
+        h.offset   = static_cast<int8_t>(offset);
+        h.velocity = static_cast<uint8_t>(velocity);
+        h.pitch    = static_cast<int8_t>(pitch);
+    }
+    return ProfileStatus::Ok;
+}
+
 ProfileStatus parse_track(const Doc& d, int idx, int sample_count, TrackData& out) {
     out = TrackData{};
     if (d.t[idx].type != JSMN_OBJECT) return ProfileStatus::BadField;
@@ -252,7 +301,21 @@ ProfileStatus parse_track(const Doc& d, int idx, int sample_count, TrackData& ou
 
     ProfileStatus s = parse_step_list(d, idx, "velocity", cfg::VELOCITY_MIN, cfg::VELOCITY_MAX, nullptr, out.step_velocity);
     if (s != ProfileStatus::Ok) return s;
-    return parse_step_list(d, idx, "step_pitch", cfg::STEP_PITCH_MIN, cfg::STEP_PITCH_MAX, out.step_pitch, nullptr);
+    s = parse_step_list(d, idx, "step_pitch", cfg::STEP_PITCH_MIN, cfg::STEP_PITCH_MAX, out.step_pitch, nullptr);
+    if (s != ProfileStatus::Ok) return s;
+    s = parse_step_list(d, idx, "step_offset", cfg::OFFSET_MIN, cfg::OFFSET_MAX, out.step_offset, nullptr);
+    if (s != ProfileStatus::Ok) return s;
+    s = parse_extra_hits(d, idx, out);
+    if (s != ProfileStatus::Ok) return s;
+
+    v = find(d, idx, "quantize");
+    if (v == BROKEN) return ProfileStatus::InvalidJson;
+    if (v != ABSENT) {
+        int q = 0;
+        if (!as_int(d, v, 0, cfg::QUANTIZE_MAX, q)) return ProfileStatus::BadField;
+        out.quantize = static_cast<uint8_t>(q);
+    }
+    return ProfileStatus::Ok;
 }
 
 ProfileStatus parse_loop(const Doc& d, int idx, int sample_count, LoopData& out) {
@@ -465,8 +528,22 @@ int ProfileCodec::write(const ProfileData& p, char* buffer, std::size_t capacity
             w.raw(", \"pattern\": "); w.str(pattern);
 
             // Listes de valeurs par pas, seulement si elles ne sont pas toutes par défaut.
-            bool custom_velocity = false, custom_pitch = false;
+            bool custom_velocity = false, custom_pitch = false, custom_offset = false, any_extra = false;
+            if (tr.quantize > cfg::QUANTIZE_MAX) w.ok = false;
             for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+                if (tr.step_offset[s] < cfg::OFFSET_MIN || tr.step_offset[s] > cfg::OFFSET_MAX) w.ok = false;
+                custom_offset = custom_offset || tr.step_offset[s] != 0;
+                if (tr.extra_count[s] > cfg::MAX_EXTRA_HITS) {
+                    w.ok = false;
+                } else {
+                    any_extra = any_extra || tr.extra_count[s] > 0;
+                    for (int h = 0; h < tr.extra_count[s]; ++h) {
+                        const Hit& hit = tr.extra[s][h];
+                        if (hit.offset < cfg::OFFSET_MIN || hit.offset > cfg::OFFSET_MAX || hit.velocity < cfg::VELOCITY_MIN ||
+                            hit.velocity > cfg::VELOCITY_MAX || hit.pitch < cfg::STEP_PITCH_MIN || hit.pitch > cfg::STEP_PITCH_MAX)
+                            w.ok = false;
+                    }
+                }
                 if (tr.step_velocity[s] < cfg::VELOCITY_MIN || tr.step_velocity[s] > cfg::VELOCITY_MAX) w.ok = false;
                 if (tr.step_pitch[s] < cfg::STEP_PITCH_MIN || tr.step_pitch[s] > cfg::STEP_PITCH_MAX) w.ok = false;
                 custom_velocity = custom_velocity || tr.step_velocity[s] != cfg::VELOCITY_MAX;
@@ -487,6 +564,34 @@ int ProfileCodec::write(const ProfileData& p, char* buffer, std::size_t capacity
                     w.integer(tr.step_pitch[s]);
                 }
                 w.ch('"');
+            }
+            if (custom_offset) {
+                w.raw(", \"step_offset\": \"");
+                for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+                    if (s) w.ch(',');
+                    w.integer(tr.step_offset[s]);
+                }
+                w.ch('"');
+            }
+            if (any_extra) {
+                w.raw(", \"extra_hits\": \"");
+                bool first = true;
+                for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+                    for (int h = 0; h < tr.extra_count[s]; ++h) {
+                        const Hit& hit = tr.extra[s][h];
+                        if (!first) w.ch(' ');
+                        first = false;
+                        w.integer(s);          w.ch(':');
+                        w.integer(hit.offset); w.ch(':');
+                        w.integer(hit.velocity); w.ch(':');
+                        w.integer(hit.pitch);
+                    }
+                }
+                w.ch('"');
+            }
+            if (tr.quantize != 0) {
+                w.raw(", \"quantize\": ");
+                w.integer(tr.quantize);
             }
             w.raw(" }");
         }

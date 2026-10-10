@@ -74,3 +74,6 @@ JSON standard, produit par la machine, lisible et modifiable à la main (pas de 
 * **Reprise de session / sauvegarde automatique** : pas prévue (la machine démarre vide). Sur Teensy, il faudra écrire à l'arrêt de la lecture ou après un délai pour ménager la carte SD.
 * **CRC** : repoussé. Il détecterait une modification silencieuse du contenu (4 000 altérations aléatoires du fichier de test en laissent 174 valides, par exemple un chiffre changé). Il devra rester facultatif pour ne pas interdire l'édition à la main.
 * **Changement de loop à la fin de la mesure**, **renommage**, **plusieurs profils** : voir l'étape 7.
+
+## Échec d'écriture : pas de copie de sécurité
+L'UI ne garde plus de copie du profil pour revenir en arrière (115 Ko de moins). Le profil en mémoire peut avoir une longueur d'avance sur le disque : si l'écriture échoue, la loop reste à son emplacement, `current_loop_` pointe dessus et l'indicateur garde son `*` ; un nouvel essai réécrit tout le profil (avec la confirmation « Ecraser ? » habituelle), sans doublon. La table de samples est nettoyée **avant** d'y ajouter les samples de la loop. Une suppression de loop dont l'écriture échoue retire la loop de la mémoire ; elle disparaît du disque à la prochaine sauvegarde réussie. Si on éteint sans réessayer, la modification est perdue.

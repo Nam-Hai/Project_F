@@ -140,3 +140,11 @@ add_test(NAME note COMMAND test_note)
 add_executable(test_keyboard tests/test_keyboard.cpp)
 target_link_libraries(test_keyboard PRIVATE core)
 add_test(NAME keyboard COMMAND test_keyboard)
+
+add_executable(test_timing tests/test_timing.cpp)
+target_link_libraries(test_timing PRIVATE core)
+add_test(NAME timing COMMAND test_timing)
+
+add_executable(test_timing_ui tests/test_timing_ui.cpp)
+target_link_libraries(test_timing_ui PRIVATE core)
+add_test(NAME timing_ui COMMAND test_timing_ui)

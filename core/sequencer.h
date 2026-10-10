@@ -3,13 +3,7 @@
 #include <cstdint>
 
 #include "../config.h"
-
-// Une note supplémentaire d'un pas (roulement) : décalage, vélocité, pitch.
-struct Hit {
-    int8_t  offset   = 0;                 // en 1/128 de pas, -64..63
-    uint8_t velocity = cfg::VELOCITY_MAX;
-    int8_t  pitch    = 0;                 // demi-tons, -12..12
-};
+#include "hit.h"
 
 // Grille de pas : on[piste][pas] != 0 -> trig. Chaque pas a une note principale (vélocité 1..127, pitch en
 // demi-tons -12..12, décalage `offset` en 1/128 de pas) et jusqu'à 3 notes supplémentaires. Ces valeurs

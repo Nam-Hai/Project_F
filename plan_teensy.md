@@ -19,10 +19,11 @@ Le POC est terminé côté fonctionnalités. Avant d'écrire du code Teensy, on 
 * **Options** : limiter les queues à 2 ; sortir le `switch` de l'enveloppe de la boucle par échantillon (traiter par segments) ; remplacer `tanh` par une approximation ; mode de qualité réduite (mono, sans interpolation) ; compteur de cycles DWT pour mesurer sur la carte ; un banc d'essai permanent dans les tests.
 * **Pour trancher** : mesurer sur la vraie carte dès que l'audio sort (P1). En attendant, ne pas optimiser à l'aveugle.
 
-### T2. Entrées : horodatage et chaîne d'interruptions — `à discuter`
-* **Constat** : les `InputEvent` n'ont pas d'horodatage ; une frappe est datée au début du bloc de rendu suivant son arrivée. Sur Teensy, `loop()` fait aussi l'écran et la SD : il peut se bloquer 20 à 30 ms (rafraîchissement OLED en I2C) ou plus (écriture SD), donc des frappes lues en retard et un enregistrement faussé.
-* **À décider** : lecture des boutons dans un timer (1 kHz ?) avec horodatage sur l'horloge d'échantillons ; format de l'horodatage dans `InputEvent` / `Command::Note` ; file d'entrées séparée de la file des commandes (la file du moteur n'a qu'un producteur : `loop()`) ; priorités des interruptions (la mise à jour audio de la bibliothèque tourne en interruption de faible priorité).
-* **Conséquences** : touche `Command::Note` (champ de temps), `Engine::record_note` (datation avec l'instant fourni), émulateur (simuler un retard et de la gigue).
+### T2. Entrées : horodatage et chaîne d'interruptions — `en attente, basse priorité` (10/10/2026)
+* **Constat (inchangé)** : les `InputEvent` n'ont pas d'horodatage ; une frappe est datée au début du bloc de rendu suivant son arrivée dans le moteur. Tout retard variable (image de l'émulateur à 16 ms, `loop()` occupé sur la Teensy, transit USB de la télécommande) se retrouve dans le groove enregistré ; la compensation de latence ne corrige que le retard fixe.
+* **Décision de l'utilisateur** : c'est un problème fin, **pas une priorité absolue**, car il faut d'abord **vérifier que tout fonctionne**. **On n'implémente rien maintenant** (ni le champ « moment de la frappe » dans `Command::Note`, ni la file d'entrées séparée) ; on y reviendra quand on s'intéressera en détail à la précision de l'enregistrement.
+* **Pour la mise en route** : les frappes sont datées à leur arrivée dans le moteur, comme aujourd'hui. La précision de l'enregistrement par la télécommande de l'ordinateur sera limitée (USB et image de l'émulateur) ; ce n'est pas bloquant pour valider l'audio, l'écran, la carte SD et l'interface.
+* **Pistes déjà identifiées (pour plus tard)** : horloge commune = compteur d'échantillons joués par le moteur ; champ « moment de la frappe » dans `Command::Note`, le moteur retirant le temps écoulé de la position calculée ; lecture des boutons dans un timer (décidé en T3), file d'entrées à part pour garder un seul producteur sur la file des commandes ; priorités des interruptions (la mise à jour audio est une interruption de faible priorité) ; côté PC, utiliser l'horodatage des événements SDL plutôt que la lecture à chaque image ; conversion d'horloge pour la télécommande.
 
 ### T3. Câblage des boutons — `décidé` (10/10/2026)
 * **Constat** : 31 boutons (16 pas, 10 touches noires, 5 commandes), plus encodeur, potard, écran, I2S. Appui **et** relâchement nécessaires (touches noires tenues), appuis simultanés nécessaires (touche tenue + roue + bouton de pas, accords en mode Clavier). La Teensy 4.1 a environ 42 broches de bord et 7 plots sous la carte (numéros à vérifier sur la carte de brochage de PJRC) : le câblage direct (31 broches + 11 à 13 pour le reste) prendrait presque tout, sans place pour des LED.
@@ -57,10 +58,20 @@ Le POC est terminé côté fonctionnalités. Avant d'écrire du code Teensy, on 
 * **Pistes pour plus tard, sans matériel en plus** : tenir une **touche noire libre** (la 9e, index 8) et tourner la **roue** de navigation, comme pour le gain ou la largeur ; ou une vue ou une ligne de menu dédiée. Dans ce cas, `InputEvent::PotBpm` serait remplacé par un événement relatif `BpmDelta(crans)` (BPM borné à 60..200, `SetBpm` seulement si la valeur change).
 * **Rien à décider maintenant.**
 
-### T6. Samples : bibliothèque, lecture, mémoire — `à discuter`
-* **Constat** : `DesktopSampleLibrary::refresh` charge chaque WAV **en entier** pour le valider (impossible sur une carte de 10 Go) ; `load_wav` lit tout le fichier en mémoire (1,8 Mo pour un 808 flottant) ; un fichier utilisé par deux pistes est chargé deux fois ; ouvrir une loop charge les nouveaux samples avant de libérer les anciens (pic doublé) ; la PSRAM se fragmente sans arène.
-* **À décider** : lecture d'en-tête seule pour lister ; lecteur WAV par morceaux (interface commune PC / Teensy) ; partage des tampons identiques ; arène en PSRAM (curseur remis à zéro à l'ouverture d'une loop, court silence) ; fichiers refusés (48 kHz) : message ou conversion ?
-* **Conséquences** : `SampleLibrary`, `SampleBank`, `load_wav`, plan mémoire.
+### T6. Samples : bibliothèque, lecture, mémoire — `décidé` (10/10/2026)
+* **Constat** : `DesktopSampleLibrary::refresh` charge chaque WAV **en entier** pour le valider (impossible sur une carte de 10 Go) ; `load_wav` lit tout le fichier en mémoire (1,8 Mo pour un 808 flottant) puis le convertit ; un fichier utilisé par deux pistes est chargé deux fois ; ouvrir une loop charge les nouveaux samples avant de libérer les anciens (pic doublé) ; la PSRAM se fragmente sans arène ; l'écoute (aperçu) recharge un sample à chaque arrêt de la roue.
+* **Décisions de l'utilisateur** :
+  * **Aucune limite** sur le nombre de samples sur la carte.
+  * **Des dossiers** pour ranger les samples seront utiles, mais en **basse priorité** : on commence avec une liste à plat.
+  * Conséquence à prévoir dès maintenant : la bibliothèque ne doit **pas** supposer qu'elle peut garder tous les noms de la carte en RAM. Elle doit pouvoir **parcourir une arborescence** : lister **un dossier à la fois** (noms triés, dossiers d'abord), entrer dans un dossier avec Valider, remonter avec Back, ne lire que les en-têtes. Les samples d'une loop sont référencés par leur **chemin relatif** (`kicks/Kick1.wav`), séparé par `/` : la longueur maximale d'un nom dans le profil (47 aujourd'hui) devra augmenter (par exemple 95). L'interface `SampleLibrary` (`count()`, `name(i)`, `find()`, `load()`) sera pensée dès le départ avec des chemins, pour que la version à plat d'aujourd'hui devienne une arborescence sans rien refaire.
+* **Sous-questions** :
+  1. *Lister* — **décidé** : lecture d'en-tête seule, un dossier à la fois (voir plus haut).
+  2. *Lire* — **décidé** : lecteur WAV **par morceaux** (4 Ko lus, convertis flottant -> 16 bits à la volée et écrits directement à leur place définitive ; le fichier n'est jamais entier en mémoire). Interface commune PC / Teensy ; seule la lecture du fichier diffère (`fopen` ou carte SD).
+  3. *Ranger en mémoire* — **décidé : arène à zone unique** (10/10/2026). Une arène en PSRAM (curseur d'allocation remis à zéro à l'ouverture d'une loop, pas de libération individuelle, donc pas de fragmentation), écrite dans `core/` pour être testée sur le Mac, avec la mémoire fournie par la plateforme. **Un court silence au changement de loop est accepté** : l'utilisateur ne prévoit pas de passer d'une loop à l'autre en direct, en jouant. Toute la mémoire reste donc disponible pour une seule loop. Déroulement prévu : l'interface envoie `ClearAll` (la loop se tait), **attend que le moteur confirme** qu'il a rendu tous les tampons (compteur dans `EngineState`), remet le curseur de l'arène à zéro, charge les samples de la nouvelle loop, puis envoie les commandes. Si l'arène est pleine : message « Memoire pleine » et la loop n'est pas chargée. Un sample ajouté ou remplacé pendant l'édition s'alloue à la suite ; un sample remplacé laisse un trou jusqu'au prochain chargement de loop (acceptable). Les deux moitiés alternées restent possibles plus tard si le besoin de changer de loop en direct apparaît.
+  4. *Partager* — **décidé** : les samples identiques sont partagés entre pistes (table « chemin -> emplacement » le temps de l'ouverture d'une loop ; facile avec une arène).
+  5. *Écoute* — **décidé** : zone séparée et réutilisée, échantillons tronqués (par exemple 2 secondes).
+  6. *Fichiers refusés* — **décidé** : la Teensy **ne convertit jamais à la volée** (ni rééchantillonnage ni conversion de profondeur). Un fichier au mauvais format est simplement absent de la liste. Un **outil de conversion sur PC** (script autour d'`afconvert`) est une idée **de très basse priorité** : l'utilisateur peut corriger ses fichiers lui-même en regardant ce qu'il ajoute.
+* **Conséquences** : `SampleLibrary`, `SampleBank`, `load_wav`, la vue « Samples » de l'interface (navigation dans les dossiers), le plan mémoire, `ProfileData` (taille des noms de samples).
 
 ### T7. Profil sur la carte : format et flux — `à discuter`
 * **Constat** : JSON jusqu'à 234 Ko (12 loops pleines), jetons 106 Ko, tampon de texte 256 Ko ; écriture sûre (`.tmp` puis renommage, `.bak`).
@@ -124,7 +135,7 @@ Le POC est terminé côté fonctionnalités. Avant d'écrire du code Teensy, on 
 
 ## Ordre de discussion proposé
 1. **T3 (câblage)**, **T4 (écran)**, **T5 (potard)** : ce sont des choix de matériel qui contraignent le reste et qu'il vaut mieux figer tôt.
-2. **T2 (entrées et horodatage)** : conséquence directe de T3 et T4, et le plus gros changement dans `core/`.
+2. ~~T2 (entrées et horodatage)~~ : **en attente**, basse priorité (voir T2).
 3. **T6 (samples)**, **T7 (profil)** : les deux gros postes mémoire et disque.
 4. **T1 (CPU)**, **T13 (qualité)** : ne se tranchent qu'après mesure ; on prépare les mesures.
 5. **T15 (MIDI et clavier d'ordinateur)** et **T16 (pilotage depuis l'ordinateur)** : partagent la file d'événements horodatés de T2, et T16 conditionne l'ordre de la mise en route (P1).

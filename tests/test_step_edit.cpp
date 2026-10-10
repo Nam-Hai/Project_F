@@ -413,7 +413,7 @@ int main() {
         g->feed({InputEvent::mode(), InputEvent::mode()});
         g->feed({InputEvent::step(4)});
         g->ui.render(c);
-        CHECK(!value_is(c, "x") && lit(c, 0, 48, 128, 8) > 0, "Edit : le texte « Pas 5 : joue », pas de jauge");
+        CHECK(lit(c, 0, 48, 128, 16) == 0, "Edit : ni texte ni jauge en bas de l'écran");
         CHECK(!c.get_pixel(99, 54) || lit(c, 0, 48, 100, 7) < 200, "Edit : pas de contour de jauge");
     }
 

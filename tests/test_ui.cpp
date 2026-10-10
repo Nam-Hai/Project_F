@@ -194,7 +194,7 @@ int main() {
         CHECK(ui.view() == UiController::View::Tracks, "Back dans la liste : rien");
     }
 
-    // Texte d'information du pas sélectionné.
+    // Mode Edit : plus de texte sur le pas touché (le pas se voit dans sa boîte).
     {
         RecordingSink sink;
         UiController  ui(sink);
@@ -203,8 +203,7 @@ int main() {
 
         Canvas c, ref;
         ui.render(c);
-        ref.text(0, 48, "Pas 5 : joue");
-        CHECK(same_rows(c, ref, 48, 56), "info : Pas 5 : joue (numérotation à partir de 1)");
+        CHECK(same_rows(c, ref, 48, 64), "Edit : aucun texte en bas de l'écran");
     }
 
     // Sans bibliothèque de samples, « Ajouter piste » ne fait rien.

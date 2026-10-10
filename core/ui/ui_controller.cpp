@@ -373,6 +373,7 @@ void UiController::adjust_step_value(int delta) {
     if (!shift_step_notes(t, step_cursor_, delta)) return;
 
     mark_dirty();
+    if (edit_mode_ == EditMode::Timing) return;  // le décalage ne change pas le son de la note : pas d'écoute
     audition_pending_ = true;
     audition_selected_step();
 }
@@ -1319,13 +1320,7 @@ void UiController::render_pattern(Canvas& c) const {
     constexpr int GAUGE_W = 100;                  // largeur de la jauge, contour compris
     const bool    selected_on = step_cursor_ >= 0 && ((t.pattern >> step_cursor_) & 1u);
 
-    if (edit_mode_ == EditMode::Edit) {
-        if (step_cursor_ >= 0) {
-            char info[24];
-            std::snprintf(info, sizeof info, "Pas %d : %s", step_cursor_ + 1, selected_on ? "joue" : "silence");
-            c.text(0, GAUGE_Y, info);
-        }
-    } else if (selected_on) {
+    if (edit_mode_ != EditMode::Edit && selected_on) {
         char value[8];
         c.rect(0, GAUGE_Y, GAUGE_W, 7, false);  // contour de la jauge
 

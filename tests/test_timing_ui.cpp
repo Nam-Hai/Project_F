@@ -207,7 +207,7 @@ int main() {
         f.feed({InputEvent::step(0), InputEvent::wheel(3)});
         CHECK(f.ui.step_offset(0, 0) == 6 && f.sink.last(Command::SetStepOffset, 0, 0).value == 6.0f && f.ui.dirty(),
               "+3 crans = +6 graduations, loop modifiée");
-        CHECK(f.sink.count(Command::AuditionStep) == 1, "note d'essai");
+        CHECK(f.sink.count(Command::AuditionStep) == 0, "mode T : pas de note d'essai");
         f.tick(100);
         f.feed({InputEvent::wheel(100)});
         CHECK(f.ui.step_offset(0, 0) == 63, "borné à 63");

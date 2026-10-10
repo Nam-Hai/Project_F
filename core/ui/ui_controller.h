@@ -125,6 +125,8 @@ public:
     bool     can_undo_take() const { return have_snapshot_; }
     const char* track_name(int track) const { return tracks_[track].name; }
     const char* track_file(int track) const { return tracks_[track].file; }
+    // The track has no usable sample (file missing or invalid): it is kept, silent, and shown with a "?".
+    bool        track_missing(int track) const { return tracks_[track].missing; }
     bool     error_shown() const { return static_cast<int32_t>(error_until_ - now_ms_) > 0; }
     const char* notice() const { return notice_; }
 
@@ -141,6 +143,7 @@ private:
     struct Track {
         char     name[NAME_LEN + 1] = "";
         char     file[profile::SAMPLE_NAME_LEN + 1] = "";
+        bool     missing            = false;  // sample introuvable ou invalide : la piste est gardée, muette, avec son nom d'origine
         uint8_t  engine_track       = 0;
         uint16_t pattern            = 0;  // bit i = pas i
         // Réglages par pas (conservés même si le pas est éteint) : vélocité 1..127, pitch -12..12.
@@ -173,6 +176,7 @@ private:
         const int16_t* data       = nullptr;
         uint32_t       length     = 0;
         int            channels   = 1;
+        bool           missing    = false;  // pas de sample : la piste est chargée quand même, sans son
         int            first_cmd  = 0;  // numéro de sa première commande dans le chargement
         int            extra      = 0;  // commandes en plus des 4 de base : une par réglage de pas non défaut
     };
@@ -219,7 +223,8 @@ private:
     int  menu_item_count() const;
     void on_menu_ok();
 
-    void open_loops();
+    void enter_loops();
+    void open_loops(int start);
     void on_loops_ok();
     void load_loop(int slot);
     void new_loop();
@@ -245,7 +250,7 @@ private:
     void render_add(Canvas& c) const;
     void render_menu(Canvas& c) const;
     void render_loops(Canvas& c) const;
-    void render_notice(Canvas& c) const;
+    void render_notice(Canvas& c, const char* text = nullptr) const;
     bool is_lit(const Track& t) const { return static_cast<int32_t>(t.lit_until - now_ms_) > 0; }
 
     CommandSink&           sink_;

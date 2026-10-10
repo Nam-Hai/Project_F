@@ -154,7 +154,9 @@ int main() {
         // Ignoré hors de la vue Pattern.
         f->feed({InputEvent::back(), InputEvent::mode()});
         CHECK(f->ui.view() == View::Tracks && f->ui.edit_mode() == Mode::Edit, "Mode ignoré dans la vue Pistes");
-        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::mode()});
+        f->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        f->sink.sent.clear();  // entering the list of loops empties the engine (ClearAll)
+        f->feed({InputEvent::mode()});
         CHECK(f->ui.view() == View::Loops && f->ui.edit_mode() == Mode::Edit, "Mode ignoré dans la vue Loops");
         CHECK(f->sink.sent.empty(), "aucune commande");
     }

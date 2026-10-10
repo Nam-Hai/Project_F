@@ -118,6 +118,7 @@ void UiController::notify(const char* text) {
 void UiController::handle(const InputEvent& e) {
     if (loading_ || restoring_) return;    // un chargement de loop est en cours : il se termine en un instant
     error_until_ = now_ms_;  // toute action efface le message
+    if (e.type != InputEvent::Ok && view_ == View::Tracks) confirm_ = false;  // « Quitter sans sauv. ? » sur la ligne de titre : tout autre geste l'annule
 
     switch (e.type) {
         case InputEvent::Wheel:  on_wheel(e.delta); break;
@@ -250,6 +251,7 @@ void UiController::confirm_replace() {
 
     std::snprintf(t.file, sizeof t.file, "%s", library_->name(add_cursor_));
     display_name(t.name, t.file);
+    t.missing = false;  // the track has a real sample now
     mark_dirty();
     view_ = menu_origin_;
 }
@@ -282,7 +284,7 @@ void UiController::delete_selected() {
 void UiController::on_ok() {
     switch (view_) {
         case View::Tracks:
-            if (cursor_ < 0) open_loops();  // la ligne de titre : accès direct à la liste des loops
+            if (cursor_ < 0) enter_loops();  // la ligne de titre : accès direct à la liste des loops
             else if (cursor_ < track_count_) open_pattern(cursor_);
             else if (can_add()) open_add(false);
             break;
@@ -317,9 +319,7 @@ void UiController::on_back() {
             close_menu();
             break;
         case View::Loops:
-            confirm_ = false;
-            view_    = View::Tracks;
-            break;
+            break;  // pas de retour : la loop courante a été quittée en entrant ; on choisit une loop ou une nouvelle
         case View::Keyboard:
             if (record_phase_ != 0) {  // quitter la vue arrête la prise (elle est conservée)
                 Command c;
@@ -918,7 +918,7 @@ void UiController::on_menu_ok() {
 
         case MenuKind::Loop:
             if (menu_cursor_ == 0) {
-                open_loops();
+                enter_loops();
             } else if (menu_cursor_ == 1) {
                 if (current_loop_ >= 0 && !confirm_) {  // écraser une loop existante : confirmation
                     confirm_ = true;
@@ -955,22 +955,43 @@ void UiController::on_menu_ok() {
 // Loops : liste, chargement, sauvegarde, suppression
 // ============================================================================================
 
-void UiController::open_loops() {
-    loops_cursor_ = current_loop_ >= 0 && current_loop_ < profile_.loop_count ? current_loop_ : 0;
+// Entering the list of loops leaves the current loop: the engine is emptied right away (the sound stops, and the engine
+// hands its samples back), and the screen model is emptied too. A loop with changes that were not saved is asked about
+// first ("Quitter sans sauv. ?": the first press asks, the second one goes). There is no way back from the list: a loop,
+// or a new one, has to be chosen. The cursor starts on the loop that was just left, so that going back to it is one press.
+void UiController::enter_loops() {
+    if (dirty_ && !confirm_) {
+        confirm_ = true;
+        return;
+    }
+    confirm_ = false;
+
+    Command c;
+    c.type = Command::ClearAll;
+    if (!sink_.push(c)) {
+        notify(" Echec de l'action");
+        return;
+    }
+    const int left = current_loop_;
+    track_count_   = 0;
+    for (Track& t : tracks_) t = Track{};
+    current_loop_ = -1;
+    dirty_        = false;
+    cursor_       = 0;
+    scroll_       = 0;
+    open_loops(left);
+}
+
+void UiController::open_loops(int start) {
+    loops_cursor_ = start >= 0 && start < profile_.loop_count ? start : 0;
     loops_scroll_ = 0;
     reveal(loops_cursor_, loops_scroll_);
     confirm_ = false;
     view_    = View::Loops;
 }
 
-// Valider dans la liste : charge la loop, ou vide la machine pour « + Nouvelle loop ». Si la loop
-// courante a des modifications non sauvegardées, une seconde validation est demandée.
+// Valider dans la liste : charge la loop, ou démarre « + Nouvelle loop » (la machine est déjà vide).
 void UiController::on_loops_ok() {
-    if (dirty_ && !confirm_) {
-        confirm_ = true;
-        return;
-    }
-    confirm_ = false;
 
     if (loops_cursor_ < profile_.loop_count) load_loop(loops_cursor_);
     else new_loop();
@@ -986,18 +1007,49 @@ void UiController::load_loop(int slot) {
     }
     const profile::LoopData& loop = profile_.loops[slot];
 
+    // Before reading any sound: does the loop fit in the memory of the samples? The size of each sample comes from its
+    // header alone. A loop that does not fit is refused (the list of loops stays open, nothing is loaded): a loop that
+    // overflows the memory would be unstable.
+    const uint32_t capacity = library_->memory_bytes();
+    if (capacity > 0) {
+        uint64_t bytes = 0;
+        for (int t = 0; t < loop.track_count; ++t) {
+            const int sample = loop.tracks[t].sample;
+            const int index  = sample < profile_.sample_count ? library_->find(profile_.samples[sample]) : -1;
+            uint32_t  frames = 0;
+            int       channels = 1;
+            if (index >= 0 && library_->info(index, frames, channels)) bytes += static_cast<uint64_t>(frames) * static_cast<uint64_t>(channels) * 2u;
+        }
+        if (bytes > capacity) {
+            notify(" Memoire pleine");
+            return;
+        }
+    }
+
+    // Every track of the loop is kept. One whose sample is missing or invalid (no such file, unreadable, wrong format)
+    // is loaded without sound: it keeps its name (so that the loop works again when the file is back), its pattern and
+    // all its settings, and the sample can be replaced later. Only a track that refers to no name at all (an index
+    // outside the table of samples, which the codecs never produce) cannot be represented and is dropped.
     plan_count_ = 0;
     int missing = 0;
     for (int t = 0; t < loop.track_count; ++t) {
         const int sample = loop.tracks[t].sample;
-        const int index  = sample < profile_.sample_count ? library_->find(profile_.samples[sample]) : -1;
-        PlannedTrack& p  = plan_[plan_count_];
-        if (index < 0 || !library_->load(index, p.data, p.length)) {
+        if (sample >= profile_.sample_count) {
             ++missing;
             continue;
         }
-        p.loop_track = t;
-        p.channels   = library_->channels(p.data);
+        const int     index = library_->find(profile_.samples[sample]);
+        PlannedTrack& p     = plan_[plan_count_];
+        p                   = PlannedTrack{};
+        p.loop_track        = t;
+        if (index >= 0 && library_->load(index, p.data, p.length)) {
+            p.channels = library_->channels(p.data);
+        } else {
+            p.data    = nullptr;
+            p.length  = 0;
+            p.missing = true;
+            ++missing;
+        }
         ++plan_count_;
     }
 
@@ -1019,6 +1071,7 @@ void UiController::load_loop(int slot) {
         const int index = add_track(profile_.samples[td.sample], static_cast<uint8_t>(k), td.pattern, td.gain, td.pitch,
                                     td.step_velocity, td.step_pitch);
         Track& t        = tracks_[index];
+        t.missing       = plan_[k].missing;
         t.quantize      = td.quantize;
         t.width        = td.width;
         t.balance      = td.balance;
@@ -1191,6 +1244,8 @@ bool UiController::next_load_command(int index, Command& c) const {
 
     switch (offset) {
         case 0:
+            // A track without sample sends the command too, with no data: the engine ignores it (nothing to play), and
+            // the numbering of the commands stays the same for every track.
             c.type     = Command::SetTrackSample;
             c.data     = p.data;
             c.length   = p.length;
@@ -1226,20 +1281,10 @@ void UiController::pump_load() {
     }
 }
 
+// "+ Nouvelle loop": the machine was already emptied (and its cursor reset) when the list of loops was entered, so
+// there is only the way out of the list.
 void UiController::new_loop() {
-    Command c;
-    c.type = Command::ClearAll;
-    if (!sink_.push(c)) {
-        notify(" Echec de l'action");
-        return;
-    }
-    track_count_ = 0;
-    for (Track& t : tracks_) t = Track{};
-    current_loop_ = -1;
-    dirty_        = false;
-    cursor_       = 0;
-    scroll_       = 0;
-    view_         = View::Tracks;
+    view_ = View::Tracks;
 }
 
 // La loop courante sous forme de LoopData ; ses samples entrent dans la table du profil.
@@ -1316,13 +1361,7 @@ void UiController::delete_loop(int slot) {
     profile_.compact_samples();
     const bool saved = store_->save(profile_);
 
-    // La loop courante garde son contenu dans la machine, mais n'a plus d'emplacement.
-    if (current_loop_ == slot) {
-        current_loop_ = -1;
-        dirty_        = true;
-    } else if (current_loop_ > slot) {
-        --current_loop_;
-    }
+    // No loop is current while the list is shown (it was left on entering): nothing to renumber.
     const int items = profile_.loop_count + 1;
     if (loops_cursor_ > items - 1) loops_cursor_ = items - 1;
     reveal(loops_cursor_, loops_scroll_);
@@ -1463,6 +1502,7 @@ void UiController::render(Canvas& c) const {
         }
     }
     if (error_shown()) render_notice(c);
+    else if (view_ == View::Tracks && cursor_ < 0 && confirm_) render_notice(c, " Quitter sans sauv. ?");  // demandé sur la ligne de titre
 }
 
 // En-tête : titre à gauche (16 caractères au plus), à droite l'état lecture / pause et le BPM ;
@@ -1514,6 +1554,7 @@ void UiController::render_tracks(Canvas& c) const {
 
         // Indicateur de jeu : un petit carré à droite quand la piste vient de jouer.
         if (i < track_count_ && is_lit(tracks_[i])) c.rect(Canvas::W - 6, y + 2, 4, 4, true, !sel);
+        if (i < track_count_ && tracks_[i].missing) c.text(Canvas::W - 6, y, "?", sel);  // sample introuvable : à la place du carré de jeu
     }
 }
 
@@ -1771,8 +1812,8 @@ void UiController::render_menu(Canvas& c) const {
             labels[2] = " Annuler";
             break;
         case MenuKind::Loop:
-            labels[0] = " Charger une loop";
-            labels[1] = confirm_ ? " Ecraser ?" : " Sauvegarder la loop";
+            labels[0] = confirm_ && menu_cursor_ == 0 ? " Quitter sans sauv. ?" : " Charger une loop";
+            labels[1] = confirm_ && menu_cursor_ == 1 ? " Ecraser ?" : " Sauvegarder la loop";
             labels[2] = " Annuler";
             break;
         case MenuKind::Keyboard:
@@ -1823,8 +1864,8 @@ void UiController::render_loops(Canvas& c) const {
 }
 
 // Message sur la dernière ligne, par-dessus ce qui s'y trouve.
-void UiController::render_notice(Canvas& c) const {
+void UiController::render_notice(Canvas& c, const char* text) const {
     const int y = LIST_ROWS * Canvas::CHAR_H;
     c.rect(0, y, Canvas::W, Canvas::CHAR_H, true, false);
-    c.text(0, y, notice_);
+    c.text(0, y, text ? text : notice_);
 }

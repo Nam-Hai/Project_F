@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Constantes globales, partagées par le core et les plateformes.
 // BLOCK = AUDIO_BLOCK_SAMPLES de la Teensy Audio Library (cf. plan_poc_desktop.md).
 namespace cfg {
@@ -40,5 +42,10 @@ constexpr int   ENV_DEFAULT_RELEASE_MS   = 5;
 // Largeur stéréo d'une piste : -100 (mono complet) à +100 (côtés doublés), 0 = sample inchangé.
 constexpr int   WIDTH_MIN        = -100;
 constexpr int   WIDTH_MAX        = 100;
+
+// Mémoire des samples d'une loop (les 16 Mo de PSRAM de la Teensy), la même sur l'émulateur pour que les deux se
+// comportent pareil : une loop qui ne tient pas dedans est refusée. La vraie arène de la Teensy sera un peu plus
+// petite (zone d'écoute...) : à revoir avec elle.
+constexpr uint32_t SAMPLE_MEMORY_BYTES = 16u * 1024u * 1024u;
 
 }  // namespace cfg

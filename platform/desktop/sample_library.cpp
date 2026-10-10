@@ -54,6 +54,18 @@ int DesktopSampleLibrary::find(const char* file) const {
     return -1;
 }
 
+bool DesktopSampleLibrary::info(int index, uint32_t& frames, int& channels) const {
+    if (index < 0 || index >= count()) return false;
+
+    const std::string path = directory_ + "/" + names_[static_cast<std::size_t>(index)];
+    wav::Info         header;
+    std::string       error;
+    if (!probe_wav(path.c_str(), header, error)) return false;  // header only: the sound data is not read
+    frames   = header.frames;
+    channels = header.channels;
+    return true;
+}
+
 bool DesktopSampleLibrary::load(int index, const int16_t*& data, uint32_t& length) {
     if (index < 0 || index >= count()) return false;
 

@@ -173,7 +173,9 @@ int main() {
 
         f->feed({InputEvent::menu(), InputEvent::black(9), InputEvent::black(4)});
         CHECK(f->ui.view() == View::Menu && f->sink.sent.empty(), "menu : la 10e noire est ignorée aussi");
-        f->feed({InputEvent::back(), InputEvent::back(), InputEvent::wheel(-5), InputEvent::ok(), InputEvent::black(9)});
+        f->feed({InputEvent::back(), InputEvent::back(), InputEvent::wheel(-5), InputEvent::ok()});
+        f->sink.sent.clear();  // entering the list of loops empties the engine (ClearAll)
+        f->feed({InputEvent::black(9)});
         CHECK(f->ui.view() == View::Loops && f->sink.sent.empty(), "liste des loops : ignorée");
     }
 

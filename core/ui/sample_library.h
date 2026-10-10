@@ -29,4 +29,17 @@ public:
 
     // Libère un buffer chargé par load() mais finalement pas transmis au moteur.
     virtual void discard(const int16_t* data) = 0;
+
+    // Taille de l'échantillon `index` une fois chargé (nombre d'images et de canaux), lue dans son en-tête sans charger
+    // les données. false si elle ne peut pas être lue (la bibliothèque qui ne sait pas la donner garde ce défaut).
+    virtual bool info(int index, uint32_t& frames, int& channels) const {
+        (void)index;
+        (void)frames;
+        (void)channels;
+        return false;
+    }
+
+    // Mémoire disponible pour les samples d'une loop, en octets (un échantillon de 16 bits en prend 2). 0 = pas de
+    // limite connue : l'interface ne refuse alors aucune loop.
+    virtual uint32_t memory_bytes() const { return 0; }
 };

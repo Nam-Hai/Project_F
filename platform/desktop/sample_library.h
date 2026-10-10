@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "../../config.h"
 #include "../../core/ui/sample_library.h"
 #include "sample_bank.h"
 
@@ -22,6 +23,8 @@ public:
     bool        load(int index, const int16_t*& data, uint32_t& length) override;
     int         channels(const int16_t* data) const override { return bank_.channels(data); }
     void        discard(const int16_t* data) override { bank_.release(data); }
+    bool        info(int index, uint32_t& frames, int& channels) const override;
+    uint32_t    memory_bytes() const override { return cfg::SAMPLE_MEMORY_BYTES; }
 
 private:
     std::string              directory_;

@@ -155,21 +155,45 @@ int main() {
         CHECK(m->bank.count() == 0, "les buffers sont rendus par le moteur puis libérés");
     }
 
-    // Un sample qui a disparu : la piste est sautée, le reste joue.
+    // Un sample qui a disparu : la piste est gardée (muette, avec son nom), le reste joue.
     fs::remove(samples + "/hat.wav");
     {
         auto m = std::unique_ptr<Machine>(new Machine(samples, profile));
         CHECK(m->library.count() == 1, "un seul sample disponible");
         m->act({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
-        CHECK(m->ui.track_count() == 1 && std::strcmp(m->ui.track_name(0), "click") == 0, "seule la piste click est restituée");
+        CHECK(m->ui.track_count() == 2 && std::strcmp(m->ui.track_name(0), "click") == 0 && std::strcmp(m->ui.track_name(1), "hat") == 0 &&
+                  !m->ui.track_missing(0) && m->ui.track_missing(1),
+              "les deux pistes sont restituées, la piste hat est signalée comme manquante");
         CHECK(std::strcmp(m->ui.notice(), " 1 sample manquant") == 0, "message : 1 sample manquant");
 
         const std::vector<float> partial = m->play(frames);
         CHECK(partial[0] == reference[0] && partial[14700] == 0.0f, "le click joue, le hat est absent");
 
-        // Resauvegarder retire le hat de la loop : le profil ne garde que ce qui existe.
+        // Resauvegarder garde la piste manquante, avec son nom d'origine.
         m->act({InputEvent::wheel(-5), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
-        CHECK(m->ui.profile().sample_count == 1 && m->ui.profile().loops[0].track_count == 1, "loop resauvegardée sans la piste manquante");
+        const profile::ProfileData& saved = m->ui.profile();
+        CHECK(saved.sample_count == 2 && saved.loops[0].track_count == 2 && std::strcmp(saved.samples[saved.loops[0].tracks[1].sample], "hat.wav") == 0,
+              "loop resauvegardée : la piste manquante est gardée, avec le nom hat.wav");
+    }
+
+    // Une loop avec un sample manquant : on change le sample de la piste et elle sonne.
+    {
+        auto m = std::unique_ptr<Machine>(new Machine(samples, profile));
+        m->act({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
+        CHECK(m->ui.track_missing(1), "la piste hat est toujours manquante");
+        m->act({InputEvent::wheel(1), InputEvent::menu(), InputEvent::ok(), InputEvent::ok()});  // piste hat, menu, Changer le sample, click.wav
+        CHECK(!m->ui.track_missing(1) && std::strcmp(m->ui.track_file(1), "click.wav") == 0 && m->ui.dirty(), "sample remplacé : la piste n'est plus manquante");
+        const std::vector<float> fixed = m->play(frames);
+        CHECK(fixed[0] != 0.0f && fixed[14700] != 0.0f, "la piste remplacée joue à son pas (le hat était absent avant)");
+    }
+
+    // La carte est revenue avec le fichier : la loop refonctionne à la réouverture.
+    write_wav(samples + "/hat.wav", {9000, -9000, 6000, -6000, 3000, 0});
+    {
+        auto m = std::unique_ptr<Machine>(new Machine(samples, profile));
+        m->act({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
+        CHECK(m->ui.track_count() == 2 && !m->ui.track_missing(0) && !m->ui.track_missing(1) && !m->ui.error_shown(), "le fichier est revenu : aucune piste manquante");
+        CHECK(m->play(frames) == reference, "la loop est identique à l'originale");
     }
 
     // Le .bak garde la version précédente du profil.
@@ -255,6 +279,56 @@ int main() {
         auto m2 = std::unique_ptr<Machine>(new Machine(samples, custom));
         m2->act({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
         CHECK(m2->play(frames) == from_file, "après sauvegarde et relecture : audio identique");
+    }
+
+    // Mémoire des samples avec de vrais fichiers : la taille vient des en-têtes, la limite est celle de la Teensy (16 Mo).
+    {
+        const std::string mem_samples = dir + "/mem_samples";
+        fs::create_directories(mem_samples);
+        const std::size_t exact = cfg::SAMPLE_MEMORY_BYTES / 2;  // images mono 16 bits qui remplissent exactement la mémoire
+        write_wav(mem_samples + "/exact.wav", std::vector<int16_t>(exact, 1000));
+        write_wav(mem_samples + "/over.wav", std::vector<int16_t>(exact + 1, 1000));
+        write_wav(mem_samples + "/small.wav", {100, 200, 300, 400, 500, 600});
+
+        static profile::ProfileData data;
+        data = profile::ProfileData{};
+        data.add_sample("exact.wav");
+        data.add_sample("over.wav");
+        data.add_sample("small.wav");
+        data.loop_count = 3;
+        for (int l = 0; l < 3; ++l) {
+            data.loops[l].bpm         = 120.0f;
+            data.loops[l].track_count = 1;
+            data.loops[l].tracks[0]   = {static_cast<uint8_t>(l), 1.0f, 1.0f, 0x1111};
+        }
+        const std::string path = dir + "/profiles/mem.dmp";
+        FileProfileStore  writer(path);
+        CHECK(writer.save(data), "profil de test : trois loops (16 Mo pile, un échantillon de trop, 6 images)");
+
+        auto m = std::unique_ptr<Machine>(new Machine(mem_samples, path));
+        uint32_t frames   = 0;
+        int      channels = 0;
+        const int exact_i = m->library.find("exact.wav"), small_i = m->library.find("small.wav");
+        CHECK(m->library.memory_bytes() == cfg::SAMPLE_MEMORY_BYTES && cfg::SAMPLE_MEMORY_BYTES == 16u * 1024u * 1024u, "la mémoire des samples de l'émulateur : 16 Mo");
+        CHECK(m->library.info(small_i, frames, channels) && frames == 6 && channels == 1, "l'en-tête donne 6 images mono");
+        CHECK(m->library.info(exact_i, frames, channels) && frames == exact && channels == 1, "l'en-tête d'un fichier de 16 Mo, sans le charger");
+        CHECK(!m->library.info(-1, frames, channels) && !m->library.info(99, frames, channels), "indice invalide : pas d'information");
+        CHECK(m->bank.count() == 0, "rien n'a été chargé pour lire les en-têtes");
+
+        // La loop 2 dépasse d'une image : refusée, rien n'est chargé.
+        m->act({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::wheel(1), InputEvent::ok()});
+        CHECK(m->ui.view() == UiController::View::Loops && m->ui.track_count() == 0 && m->bank.count() == 0 &&
+                  std::strcmp(m->ui.notice(), " Memoire pleine") == 0,
+              "une loop d'un échantillon de plus que 16 Mo : refusée, aucun fichier chargé, la liste reste ouverte");
+
+        // La loop 1 remplit la mémoire à l'octet près : elle s'ouvre.
+        m->act({InputEvent::wheel(-1), InputEvent::ok()});
+        CHECK(m->ui.view() == UiController::View::Tracks && m->ui.track_count() == 1 && m->ui.current_loop() == 0 && m->bank.count() == 1,
+              "une loop de 16 Mo pile : chargée");
+
+        // Une petite loop passe ensuite, et l'ancien gros sample est rendu par le moteur.
+        m->act({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::wheel(2), InputEvent::ok()});
+        CHECK(m->ui.current_loop() == 2 && m->ui.track_count() == 1 && m->bank.count() == 1, "la loop de 6 images : chargée, l'ancien sample libéré");
     }
 
     fs::remove_all(dir);

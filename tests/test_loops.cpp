@@ -49,6 +49,28 @@ struct FakeLibrary : SampleLibrary {
     std::vector<int>            fail_index;  // index dont le chargement échoue
     std::vector<const int16_t*> discarded;
 
+    // Taille et mémoire annoncées (en-têtes) : 4 images mono par défaut, pas de limite.
+    uint32_t            frames_of[8]   = {4, 4, 4, 4, 4, 4, 4, 4};
+    int                 channels_of[8] = {1, 1, 1, 1, 1, 1, 1, 1};
+    std::vector<int>    info_fails;  // index dont l'en-tête est illisible
+    uint32_t            capacity = 0;
+    int                 loads    = 0;  // nombre de chargements demandés
+
+    int channels(const int16_t* d) const override {
+        for (int i = 0; i < 8; ++i)
+            if (d == data[i]) return channels_of[i];
+        return 1;
+    }
+
+    bool info(int i, uint32_t& frames, int& channels) const override {
+        for (int f : info_fails)
+            if (f == i) return false;
+        frames   = frames_of[i];
+        channels = channels_of[i];
+        return true;
+    }
+    uint32_t memory_bytes() const override { return capacity; }
+
     int         count() const override { return static_cast<int>(names.size()); }
     const char* name(int i) const override { return names[static_cast<std::size_t>(i)].c_str(); }
     int         find(const char* f) const override {
@@ -57,6 +79,7 @@ struct FakeLibrary : SampleLibrary {
         return -1;
     }
     bool load(int i, const int16_t*& d, uint32_t& n) override {
+        ++loads;
         for (int f : fail_index)
             if (f == i) return false;
         d = data[i];
@@ -174,6 +197,7 @@ int main() {
         ref = plain;
         ref.invert_rect(0, 0, Canvas::W, Canvas::CHAR_H);
         CHECK(same_rows(got, ref, 0, 8), "titre sélectionné : la ligne du haut est inversée");
+        CHECK(same_rows(got, plain, 16, 64), "titre sélectionné, sans confirmation : le bas de l'écran est inchangé (pas de question)");
         f->feed({InputEvent::wheel(-1)});
 
         f->feed({InputEvent::menu()});
@@ -189,11 +213,18 @@ int main() {
 
         f->feed({InputEvent::ok()});
         CHECK(f->ui.view() == UiController::View::Loops, "Valider sur le titre : liste des loops");
+        CHECK(f->sink.sent.size() == 1 && f->sink.sent[0].type == Command::ClearAll && f->ui.track_count() == 0 && f->ui.current_loop() == -1,
+              "entrer dans la liste vide le moteur (ClearAll) et le modèle de l'écran");
         f->feed({InputEvent::back()});
-        CHECK(f->ui.view() == UiController::View::Tracks && f->sink.sent.empty(), "Back : retour aux pistes, rien envoyé");
+        CHECK(f->ui.view() == UiController::View::Loops && f->sink.sent.size() == 1, "Back : pas de retour depuis la liste, rien envoyé");
+
+        f->feed({InputEvent::ok()});  // « + Nouvelle loop » (le profil est vide)
+        CHECK(f->ui.view() == UiController::View::Tracks && f->sink.sent.size() == 1 && f->ui.track_count() == 0 && f->ui.cursor() == 0,
+              "« + Nouvelle loop » : retour aux pistes, la machine était déjà vide (aucune commande de plus)");
 
         // Sur une piste, Menu ouvre toujours le menu de la piste.
-        f->feed({InputEvent::wheel(1), InputEvent::menu()});
+        f->ui.add_track("Kick1.wav", 0);
+        f->feed({InputEvent::menu()});
         CHECK(f->ui.menu_kind() == UiController::MenuKind::Track, "Menu sur une piste : menu de la piste");
     }
 
@@ -255,8 +286,9 @@ int main() {
         CHECK(f->ui.confirming() && f->store.saves == 0, "écraser : confirmation demandée, rien écrit");
         Canvas got, ref;
         f->ui.render(got);
+        row(ref, 8, " Charger une loop", false);
         row(ref, 16, " Ecraser ?", true);
-        CHECK(same_rows(got, ref, 16, 24), "libellé « Ecraser ? »");
+        CHECK(same_rows(got, ref, 8, 24), "libellé « Ecraser ? », et la ligne « Charger une loop » reste inchangée");
 
         f->feed({InputEvent::wheel(1), InputEvent::wheel(-1)});
         CHECK(!f->ui.confirming(), "la roue annule la confirmation");
@@ -299,11 +331,11 @@ int main() {
         CHECK(std::strcmp(f->store.file.samples[0], "Kick1.wav") == 0 && std::strcmp(f->store.file.samples[1], "HH.wav") == 0 &&
                   f->store.file.loops[0].tracks[1].sample == 1,
               "table de samples nettoyée, pistes renumérotées");
-        CHECK(f->ui.current_loop() == 0, "la loop courante a glissé de l'emplacement 2 à 1");
+        CHECK(f->ui.current_loop() == -1 && !f->ui.dirty() && f->ui.track_count() == 0, "aucune loop courante dans la liste : rien à renuméroter");
         CHECK(std::strcmp(f->ui.notice(), " Loop supprimee") == 0, "message");
     }
 
-    // ----- Supprimer la loop courante : elle reste dans la machine, sans emplacement -----
+    // ----- Supprimer la loop qu'on vient de quitter : la machine est déjà vide -----
     {
         auto f = make();
         fill_profile(f->store.file);
@@ -312,8 +344,8 @@ int main() {
         f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});  // charge la loop 1
         f->tick();
         f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::menu(), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->store.file.loop_count == 1 && f->ui.current_loop() == -1 && f->ui.dirty() && f->ui.track_count() == 2,
-              "loop courante supprimée : toujours dans la machine, sans emplacement, marquée modifiée");
+        CHECK(f->store.file.loop_count == 1 && f->ui.current_loop() == -1 && !f->ui.dirty() && f->ui.track_count() == 0,
+              "loop supprimée depuis la liste : la machine reste vide, aucune loop courante, rien de modifié");
 
         // « + Nouvelle loop » n'a pas de menu.
         f->feed({InputEvent::wheel(5), InputEvent::menu()});
@@ -345,8 +377,8 @@ int main() {
         f->ui.render(got);
         ref.clear();
         row(ref, 8, " L1 120bpm 2 pistes", false);
-        row(ref, 16, ">L2 90bpm 1 piste", true);  // « > » devant la loop courante, curseur dessus
-        CHECK(same_rows(got, ref, 8, 24), "la loop courante est marquée par « > » et le curseur démarre dessus");
+        row(ref, 16, " L2 90bpm 1 piste", true);  // plus de loop courante : pas de « > » ; le curseur démarre sur la loop quittée
+        CHECK(same_rows(got, ref, 8, 24), "aucune loop courante dans la liste, et le curseur démarre sur la loop qu'on vient de quitter");
     }
 
     // ----- Chargement d'une loop -----
@@ -355,7 +387,9 @@ int main() {
         fill_profile(f->store.file);
         f->store.exists = true;
         f->ui.load_profile();
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});  // loop 1
+        f->feed({InputEvent::wheel(-1), InputEvent::ok()});  // la liste des loops : le moteur est vidé
+        f->sink.sent.clear();
+        f->feed({InputEvent::ok()});  // loop 1
 
         const auto& s = f->sink.sent;
         CHECK(!f->ui.loading(), "chargement terminé d'un coup quand la file accepte tout");
@@ -374,8 +408,10 @@ int main() {
               "modèle de l'UI : pistes, patterns, loop courante, aucune modification");
 
         // Charger la loop 2, qui n'a qu'une piste : les anciennes pistes disparaissent.
+        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::wheel(1)});
+        CHECK(f->ui.track_count() == 0 && f->sink.count(Command::ClearAll) == 2, "entrer dans la liste : anciennes pistes retirées tout de suite");
         f->sink.sent.clear();
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::wheel(1), InputEvent::ok()});
+        f->feed({InputEvent::ok()});
         CHECK(f->sink.sent.size() == 6 && f->sink.sent[0].type == Command::ClearAll && f->sink.sent[1].value == 90.0f &&
                   f->ui.track_count() == 1 && std::strcmp(f->ui.track_name(0), "HH") == 0 && f->ui.bpm() == 90,
               "la loop 2 remplace tout");
@@ -388,6 +424,7 @@ int main() {
         f->store.exists = true;
         f->ui.load_profile();
         f->feed({InputEvent::wheel(-1), InputEvent::ok()});
+        f->sink.sent.clear();  // le ClearAll de l'entrée dans la liste
         f->sink.budget = 3;
         f->feed({InputEvent::ok()});
         CHECK(f->ui.loading() && f->sink.sent.size() == 3, "file saturée : 3 commandes parties, chargement en cours");
@@ -407,31 +444,172 @@ int main() {
         CHECK(f->sink.count(Command::Play) == 1, "les entrées fonctionnent de nouveau");
     }
 
-    // ----- Samples introuvables : les pistes concernées sont sautées -----
+    // ----- Samples introuvables : les pistes sont gardées, muettes, avec leur nom d'origine -----
     {
         auto f = make();
         fill_profile(f->store.file);
         f->store.exists = true;
         f->lib.names    = {"Kick1.wav", "HH.wav"};  // Snare1.wav a disparu
         f->ui.load_profile();
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->ui.track_count() == 1 && std::strcmp(f->ui.track_name(0), "Kick1") == 0 && f->sink.count(Command::SetTrackSample) == 1 &&
-                  f->sink.sent.size() == 6,
-              "la piste au sample manquant est sautée");
+        auto open_first = [&] {
+            f->feed({InputEvent::wheel(-1), InputEvent::ok()});
+            f->sink.sent.clear();  // le ClearAll de l'entrée dans la liste
+            f->feed({InputEvent::ok()});
+        };
+        open_first();
+        CHECK(f->ui.track_count() == 2 && std::strcmp(f->ui.track_name(0), "Kick1") == 0 && std::strcmp(f->ui.track_name(1), "Snare1") == 0 &&
+                  std::strcmp(f->ui.track_file(1), "Snare1.wav") == 0 && !f->ui.track_missing(0) && f->ui.track_missing(1),
+              "la piste au sample manquant est gardée, avec son nom, signalée comme manquante");
+        CHECK(f->sink.count(Command::SetTrackSample) == 2 && f->sink.sent.size() == 2 + 4 * 2 && f->sink.sent[6].type == Command::SetTrackSample &&
+                  f->sink.sent[6].track == 1 && f->sink.sent[6].data == nullptr,
+              "ses commandes partent comme celles des autres (le sample est vide : le moteur l'ignore)");
+        CHECK(f->sink.sent[5].type == Command::SetTrackPattern && f->sink.sent[9].type == Command::SetTrackPattern && f->sink.sent[9].track == 1 && f->sink.sent[9].length == 0x0410,
+              "son pattern est envoyé");
         CHECK(std::strcmp(f->ui.notice(), " 1 sample manquant") == 0 && f->ui.error_shown(), "message : 1 sample manquant");
 
         f->lib.names = {"Kick1.wav", "Snare1.wav", "HH.wav"};
         f->lib.fail_index = {1};  // Snare1 existe mais ne se charge pas
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->ui.track_count() == 1 && std::strcmp(f->ui.notice(), " 1 sample manquant") == 0, "un échec de chargement compte comme manquant");
+        open_first();
+        CHECK(f->ui.track_count() == 2 && f->ui.track_missing(1) && std::strcmp(f->ui.notice(), " 1 sample manquant") == 0, "un échec de chargement compte comme manquant, la piste est gardée");
 
         f->lib.names = {"HH.wav"};
         f->lib.fail_index.clear();
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->ui.track_count() == 0 && std::strcmp(f->ui.notice(), " 2 samples manquants") == 0, "message : 2 samples manquants");
+        open_first();
+        CHECK(f->ui.track_count() == 2 && f->ui.track_missing(0) && f->ui.track_missing(1) && std::strcmp(f->ui.notice(), " 2 samples manquants") == 0,
+              "message : 2 samples manquants, les deux pistes sont gardées");
+
+        // Le fichier est revenu : à la réouverture, plus rien ne manque.
+        f->lib.names = {"Kick1.wav", "Snare1.wav", "HH.wav"};
+        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
+        CHECK(f->ui.track_count() == 2 && !f->ui.track_missing(0) && !f->ui.track_missing(1) && !f->ui.error_shown(), "le sample est revenu : la loop se recharge normalement");
     }
 
-    // ----- Perdre les modifications : confirmation -----
+    // ----- Le nombre de canaux d'un sample chargé est transmis au moteur ; un index hors table est écarté -----
+    {
+        auto f = make();
+        fill_profile(f->store.file);
+        f->store.exists = true;
+        f->lib.channels_of[1] = 2;  // Snare1 est stéréo
+        f->ui.load_profile();
+        f->feed({InputEvent::wheel(-1), InputEvent::ok()});
+        f->sink.sent.clear();
+        f->feed({InputEvent::ok()});
+        CHECK(f->sink.sent.size() == 10 && f->sink.sent[2].channels == 1 && f->sink.sent[6].channels == 2, "SetTrackSample : 1 canal pour Kick1, 2 pour Snare1");
+
+        // Une piste dont l'index de sample est hors de la table (que les codecs ne produisent pas) est écartée, sans plantage.
+        auto g = make();
+        fill_profile(g->store.file);
+        g->store.file.loops[0].tracks[1].sample = static_cast<uint8_t>(g->store.file.sample_count);  // juste après la table
+        g->store.exists = true;
+        g->ui.load_profile();
+        g->feed({InputEvent::wheel(-1), InputEvent::ok()});
+        g->sink.sent.clear();
+        g->feed({InputEvent::ok()});
+        CHECK(g->ui.track_count() == 1 && std::strcmp(g->ui.track_name(0), "Kick1") == 0 && !g->ui.track_missing(0) && g->sink.sent.size() == 6 &&
+                  std::strcmp(g->ui.notice(), " 1 sample manquant") == 0,
+              "index de sample hors de la table : la piste est écartée, le reste se charge");
+    }
+
+    // ----- Une piste sans sample : affichage « ? », modifications, remplacement, sauvegarde -----
+    {
+        auto f = make();
+        fill_profile(f->store.file);
+        f->store.exists = true;
+        f->lib.names    = {"Kick1.wav", "HH.wav"};  // Snare1.wav manque
+        f->ui.load_profile();
+        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});  // loop 1 : Kick1, Snare1 (manquant)
+        f->tick();
+
+        // L'indicateur « ? » : à droite de la ligne de la piste manquante, et d'elle seule.
+        Canvas got, ref;
+        f->ui.render(got);
+        auto has_question = [&](int row_y, bool inverted) {
+            Canvas q;
+            if (inverted) q.rect(0, row_y, Canvas::W, Canvas::CHAR_H, true);
+            q.text(Canvas::W - 6, row_y, "?", inverted);
+            for (int y = row_y; y < row_y + 8; ++y)
+                for (int x = Canvas::W - 6; x < Canvas::W; ++x)
+                    if (got.get_pixel(x, y) != q.get_pixel(x, y)) return false;
+            return true;
+        };
+        CHECK(has_question(16, false), "la ligne de la piste manquante porte un « ? » à droite");
+        f->feed({InputEvent::wheel(1)});
+        f->ui.render(got);
+        CHECK(has_question(16, true), "piste sélectionnée (ligne inversée) : le « ? » est inversé aussi");
+        bool none_on_first = true;
+        for (int y = 8; y < 16; ++y)
+            for (int x = Canvas::W - 6; x < Canvas::W; ++x) none_on_first = none_on_first && !got.get_pixel(x, y);
+        CHECK(none_on_first, "pas de « ? » sur la piste dont le sample existe");
+        f->feed({InputEvent::wheel(-1)});
+
+        // On modifie la piste comme n'importe quelle autre : pattern, vélocité, pitch, gain, réglages.
+        f->sink.sent.clear();
+        f->feed({InputEvent::wheel(1), InputEvent::ok()});  // ouvre le pattern de la piste 2
+        CHECK(f->ui.view() == UiController::View::Pattern && f->ui.engine_track(f->ui.cursor()) == 1, "le pattern de la piste manquante s'ouvre");
+        f->feed({InputEvent::step(5)});
+        CHECK(f->ui.dirty() && f->sink.count(Command::SetStep) == 1 && f->sink.sent[0].track == 1 && f->sink.sent[0].step == 5 && f->sink.sent[0].value == 1.0f,
+              "un pas s'allume : commande envoyée à la piste moteur 1");
+        f->sink.sent.clear();
+        f->feed({InputEvent::mode(), InputEvent::step(4), InputEvent::wheel(-10)});  // vélocité du pas 5 (joué)
+        CHECK(f->sink.count(Command::SetStepVelocity) >= 1 && f->sink.sent[0].track == 1, "la vélocité d'un pas se règle, envoyée à la piste 1 du moteur");
+        f->sink.sent.clear();
+        f->feed({InputEvent::black(0), InputEvent::wheel(-6), InputEvent::black_up(0)});  // gain de la piste
+        CHECK(f->sink.count(Command::SetTrackGain) >= 1 && f->sink.sent.back().type == Command::SetTrackGain && f->sink.sent.back().track == 1, "le gain de la piste se règle");
+        f->feed({InputEvent::back()});
+
+        // La piste manquante est sauvegardée telle quelle : son nom est conservé.
+        f->feed({InputEvent::wheel(-5), InputEvent::menu(), InputEvent::wheel(1), InputEvent::ok(), InputEvent::ok()});
+        const ProfileData& p = f->store.file;
+        CHECK(f->store.saves == 1 && p.loops[0].track_count == 2 && std::strcmp(p.samples[p.loops[0].tracks[1].sample], "Snare1.wav") == 0,
+              "sauvegarde : la piste manquante est gardée avec le nom Snare1.wav");
+
+        // Changer le sample : la piste a enfin un son, son nom change, plus de « ? ».
+        f->feed({InputEvent::wheel(2)});  // le curseur était sur le titre : la piste 2 est deux crans plus bas
+        f->feed({InputEvent::menu(), InputEvent::ok()});  // menu de la piste 2, Changer le sample
+        CHECK(f->ui.view() == UiController::View::Add, "Changer le sample : la liste des samples s'ouvre");
+        f->sink.sent.clear();
+        f->feed({InputEvent::wheel(1), InputEvent::ok()});  // HH.wav
+        CHECK(f->sink.count(Command::SetTrackSample) == 1 && f->sink.sent[0].track == 1 && f->sink.sent[0].data != nullptr,
+              "le nouveau sample part vers la piste moteur 1");
+        CHECK(!f->ui.track_missing(1) && std::strcmp(f->ui.track_file(1), "HH.wav") == 0 && f->ui.dirty(), "plus manquante, nom du fichier mis à jour, loop modifiée");
+        f->feed({InputEvent::wheel(-1)});  // la piste 2 n'est plus sélectionnée : sa ligne est claire
+        f->ui.render(got);
+        bool gone = true;
+        for (int y = 16; y < 24; ++y)
+            for (int x = Canvas::W - 6; x < Canvas::W; ++x) gone = gone && !got.get_pixel(x, y);
+        CHECK(gone, "le « ? » a disparu");
+    }
+    {
+        // Les réglages d'une piste manquante (pitch, vélocité, enveloppe) suivent les autres au chargement.
+        auto f = make();
+        ProfileData& p = f->store.file;
+        p              = ProfileData{};
+        p.add_sample("Kick1.wav");
+        p.add_sample("Snare1.wav");
+        p.add_sample("HH.wav");
+        p.loop_count           = 1;
+        p.loops[0].track_count = 3;
+        p.loops[0].tracks[0].sample = 0;
+        p.loops[0].tracks[1].sample = 1;  // sera introuvable
+        p.loops[0].tracks[1].step_pitch[0] = 5;
+        p.loops[0].tracks[1].attack        = 20;
+        p.loops[0].tracks[2].sample = 2;
+        p.loops[0].tracks[2].step_velocity[2] = 64;
+        f->store.exists = true;
+        f->lib.names    = {"Kick1.wav", "HH.wav"};
+        f->ui.load_profile();
+        f->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        f->sink.sent.clear();  // le ClearAll de l'entrée dans la liste
+        f->feed({InputEvent::ok()});
+        const auto& s = f->sink.sent;
+        CHECK(s.size() == 2 + 3 * 4 + 1 + 1 + 1 && f->ui.track_count() == 3, "3 pistes chargées, leurs commandes toutes envoyées");
+        CHECK(s.back().type == Command::SetStepVelocity && s.back().track == 2 && s.back().step == 2 && s.back().value == 64.0f,
+              "la vélocité de la 3e piste vise la piste moteur 2");
+        CHECK(f->sink.count(Command::SetStepPitch) == 1 && f->ui.step_pitch(1, 0) == 5, "le pitch d'un pas de la piste manquante est envoyé et gardé dans le modèle");
+        CHECK(f->ui.step_velocity(2, 2) == 64 && f->ui.track_missing(1) && !f->ui.track_missing(2), "modèle : la piste HH garde sa vélocité, seule la 2e est manquante");
+    }
+
+    // ----- Perdre les modifications : « Quitter sans sauv. ? » est demandé en entrant dans la liste des loops -----
     {
         auto f = make();
         fill_profile(f->store.file);
@@ -441,23 +619,33 @@ int main() {
         f->feed({InputEvent::ok(), InputEvent::step(2), InputEvent::back()});  // modification : loop jamais sauvegardée
         CHECK(f->ui.dirty(), "loop modifiée");
 
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->ui.confirming() && f->ui.view() == UiController::View::Loops && f->sink.count(Command::ClearAll) == 0,
-              "première validation : confirmation, rien chargé");
+        // Depuis la ligne de titre.
+        f->feed({InputEvent::wheel(-1), InputEvent::ok()});
+        CHECK(f->ui.confirming() && f->ui.view() == UiController::View::Tracks && f->sink.count(Command::ClearAll) == 0 && f->ui.track_count() == 1,
+              "première validation : confirmation demandée, rien vidé, on reste sur les pistes");
         Canvas got, ref;
         f->ui.render(got);
-        row(ref, 8, " Quitter sans sauv. ?", true);
-        CHECK(same_rows(got, ref, 8, 16), "libellé « Quitter sans sauv. ? »");
+        ref.text(0, 56, " Quitter sans sauv. ?");
+        CHECK(same_rows(got, ref, 56, 64), "la question s'affiche en bas de l'écran");
 
         f->feed({InputEvent::wheel(1)});
         CHECK(!f->ui.confirming(), "la roue annule");
-        f->feed({InputEvent::ok(), InputEvent::back()});
+        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::back()});
         CHECK(!f->ui.confirming() && f->ui.view() == UiController::View::Tracks && f->sink.count(Command::ClearAll) == 0, "Back annule");
+        f->feed({InputEvent::ok(), InputEvent::play()});
+        CHECK(!f->ui.confirming() && f->ui.view() == UiController::View::Tracks && f->sink.count(Command::ClearAll) == 0, "n'importe quel autre geste annule aussi");
 
-        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok(), InputEvent::ok()});
-        CHECK(f->sink.count(Command::ClearAll) == 1 && f->ui.current_loop() == 0 && !f->ui.dirty(), "seconde validation : la loop est chargée");
+        f->feed({InputEvent::ok(), InputEvent::ok()});
+        CHECK(f->ui.view() == UiController::View::Loops && f->sink.count(Command::ClearAll) == 1 && f->ui.track_count() == 0 && !f->ui.dirty() &&
+                  f->ui.current_loop() == -1 && !f->ui.confirming(),
+              "seconde validation : moteur et écran vidés, la liste s'ouvre, plus rien de modifié");
+
+        // Le choix d'une loop ne redemande rien.
+        f->feed({InputEvent::ok()});
+        CHECK(f->ui.current_loop() == 0 && f->ui.view() == UiController::View::Tracks && f->ui.track_count() == 2, "choisir une loop : chargée sans confirmation");
     }
     {
+        // Depuis le menu de la loop : « Charger une loop » demande la même chose.
         auto f = make();
         fill_profile(f->store.file);
         f->store.exists = true;
@@ -466,20 +654,186 @@ int main() {
         f->feed({InputEvent::wheel(1), InputEvent::ok(), InputEvent::step(5), InputEvent::back()});  // modifie la piste 2
         CHECK(f->ui.dirty(), "modifiée");
         f->sink.sent.clear();
-        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::wheel(5), InputEvent::ok()});  // titre, liste, « + Nouvelle loop »
-        CHECK(f->ui.confirming() && f->sink.sent.empty(), "« + Nouvelle loop » modifiée : confirmation");
-        f->feed({InputEvent::ok()});
-        CHECK(f->sink.count(Command::ClearAll) == 1 && f->ui.track_count() == 0 && f->ui.current_loop() == -1 && !f->ui.dirty() &&
-                  f->ui.view() == UiController::View::Tracks,
-              "seconde validation : machine vidée, loop sans emplacement");
-        Canvas got;
-        f->ui.render(got);
-        CHECK(header_has(got, "Pistes", "L*", "120"), "L* après une nouvelle loop");
 
-        // Une loop vide jamais touchée ne demande pas de confirmation.
+        f->feed({InputEvent::wheel(-5), InputEvent::menu(), InputEvent::ok()});  // titre, menu de la loop, « Charger une loop »
+        CHECK(f->ui.confirming() && f->ui.view() == UiController::View::Menu && f->sink.sent.empty(), "menu, « Charger une loop » : confirmation, rien envoyé");
+        Canvas got, ref;
+        f->ui.render(got);
+        row(ref, 8, " Quitter sans sauv. ?", true);
+        row(ref, 16, " Sauvegarder la loop", false);
+        CHECK(same_rows(got, ref, 8, 24), "libellé « Quitter sans sauv. ? » sur la ligne du menu (l'autre ligne inchangée)");
+
+        f->feed({InputEvent::wheel(1)});
+        CHECK(!f->ui.confirming(), "la roue annule");
+        f->ui.render(got);
+        ref.clear();
+        row(ref, 8, " Charger une loop", false);
+        row(ref, 16, " Sauvegarder la loop", true);
+        CHECK(same_rows(got, ref, 8, 24), "libellés normaux après l'annulation");
+
+        f->feed({InputEvent::wheel(-1), InputEvent::ok(), InputEvent::ok()});
+        CHECK(f->ui.view() == UiController::View::Loops && f->sink.count(Command::ClearAll) == 1 && f->ui.track_count() == 0 && !f->ui.dirty(),
+              "seconde validation : vidé, la liste s'ouvre");
+
+        // « + Nouvelle loop » : la machine est déjà vide, rien de plus à envoyer.
         f->sink.sent.clear();
-        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
-        CHECK(!f->ui.confirming() && f->ui.current_loop() == 0 && f->sink.count(Command::ClearAll) == 1, "loop vide : pas de confirmation, la loop est chargée");
+        f->feed({InputEvent::wheel(5), InputEvent::ok()});
+        CHECK(f->sink.sent.empty() && f->ui.track_count() == 0 && f->ui.current_loop() == -1 && f->ui.view() == UiController::View::Tracks,
+              "« + Nouvelle loop » : retour aux pistes, aucune commande");
+        Canvas c2;
+        f->ui.render(c2);
+        CHECK(header_has(c2, "Pistes", "L*", "120"), "L* après une nouvelle loop");
+
+        // Une loop propre n'a pas de confirmation à l'entrée.
+        f->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        CHECK(!f->ui.confirming() && f->ui.view() == UiController::View::Loops, "loop non modifiée : la liste s'ouvre tout de suite");
+    }
+
+    // ----- Entrée dans la liste : file de commandes pleine -----
+    {
+        auto f = make();
+        fill_profile(f->store.file);
+        f->store.exists = true;
+        f->ui.load_profile();
+        f->ui.add_track("Kick1.wav", 0, 0x0001);
+        f->sink.budget = 0;  // la file n'accepte plus rien
+        f->feed({InputEvent::wheel(-1), InputEvent::ok()});
+        CHECK(f->ui.view() == UiController::View::Tracks && f->ui.track_count() == 1 && std::strcmp(f->ui.notice(), " Echec de l'action") == 0,
+              "file pleine : message, on reste sur les pistes avec leur contenu");
+        f->sink.budget = 100;
+        f->feed({InputEvent::ok()});
+        CHECK(f->ui.view() == UiController::View::Loops && f->ui.track_count() == 0, "la file accepte de nouveau : la liste s'ouvre");
+
+        // Loop modifiée : après un échec à la seconde validation, la question sera reposée.
+        auto g = make();
+        fill_profile(g->store.file);
+        g->store.exists = true;
+        g->ui.load_profile();
+        g->ui.add_track("Kick1.wav", 0, 0x0001);
+        g->feed({InputEvent::ok(), InputEvent::step(2), InputEvent::back(), InputEvent::wheel(-1), InputEvent::ok()});
+        CHECK(g->ui.confirming(), "loop modifiée : question posée");
+        g->sink.budget = 0;
+        g->feed({InputEvent::ok()});
+        CHECK(!g->ui.confirming() && g->ui.view() == UiController::View::Tracks && g->ui.dirty() && g->ui.track_count() == 1,
+              "échec de l'envoi : rien perdu, la question n'est plus en attente");
+        g->sink.budget = 100;
+        g->feed({InputEvent::ok()});
+        CHECK(g->ui.confirming() && g->ui.view() == UiController::View::Tracks, "elle est reposée à la validation suivante");
+    }
+
+    // ----- Mémoire des samples : une loop qui ne tient pas est refusée avant tout chargement -----
+    {
+        auto make_mem = [] {
+            auto f = make();
+            ProfileData& p = f->store.file;
+            p              = ProfileData{};
+            p.add_sample("Kick1.wav");
+            p.add_sample("Snare1.wav");
+            p.add_sample("HH.wav");
+            p.loop_count                 = 2;
+            p.loops[0].bpm               = 120.0f;
+            p.loops[0].track_count       = 2;
+            p.loops[0].tracks[0]         = {0, 1.0f, 1.0f, 0x1111};  // Kick : 1000 images mono = 2000 octets
+            p.loops[0].tracks[1]         = {1, 1.0f, 1.0f, 0x0410};  // Snare : 500 images stéréo = 2000 octets
+            p.loops[1].bpm               = 90.0f;
+            p.loops[1].track_count       = 1;
+            p.loops[1].tracks[0]         = {2, 1.0f, 1.0f, 0x00FF};  // HH : 100 images mono = 200 octets
+            f->store.exists    = true;
+            f->lib.frames_of[0]   = 1000;
+            f->lib.frames_of[1]   = 500;
+            f->lib.channels_of[1] = 2;
+            f->lib.frames_of[2]   = 100;
+            f->ui.load_profile();
+            return f;
+        };
+        auto open_list = [](Fixture& f) { f.feed({InputEvent::wheel(-1), InputEvent::ok()}); f.sink.sent.clear(); };
+
+        // Exactement la place : chargée.
+        auto f = make_mem();
+        f->lib.capacity = 4000;
+        open_list(*f);
+        f->feed({InputEvent::ok()});
+        CHECK(f->ui.current_loop() == 0 && f->ui.track_count() == 2 && f->ui.view() == UiController::View::Tracks && !f->ui.error_shown(),
+              "la loop de 4000 octets tient dans 4000 octets : chargée");
+
+        // Un octet de moins : refusée, rien n'est chargé ni envoyé, la liste reste ouverte.
+        auto g = make_mem();
+        g->lib.capacity = 3999;
+        open_list(*g);
+        g->feed({InputEvent::ok()});
+        CHECK(g->ui.view() == UiController::View::Loops && g->ui.track_count() == 0 && g->ui.current_loop() == -1 && g->sink.sent.empty() && g->lib.loads == 0 &&
+                  !g->ui.loading() && std::strcmp(g->ui.notice(), " Memoire pleine") == 0 && g->ui.error_shown(),
+              "4000 octets dans 3999 : refusée, rien chargé, rien envoyé, la liste reste ouverte, message");
+        Canvas got, ref;
+        g->ui.render(got);
+        row(ref, 8, " L1 120bpm 2 pistes", true);
+        row(ref, 16, " L2 90bpm 1 piste", false);
+        row(ref, 24, " + Nouvelle loop", false);
+        ref.text(0, 56, " Memoire pleine");
+        CHECK(same_rows(got, ref, 8, 64), "la loop refusée reste listée, le message est en bas");
+
+        // Une plus petite loop de la même liste se charge, et on peut ressayer la grosse quand la place revient.
+        g->feed({InputEvent::wheel(1), InputEvent::ok()});
+        CHECK(g->ui.current_loop() == 1 && g->ui.track_count() == 1 && g->lib.loads == 1, "la loop de 200 octets passe");
+        g->feed({InputEvent::wheel(-5), InputEvent::ok()});  // titre, liste
+        g->lib.capacity = 4000;
+        g->feed({InputEvent::wheel(-1), InputEvent::ok()});  // le curseur démarre sur la loop 2 : on remonte sur la loop 1
+        CHECK(g->ui.current_loop() == 0 && g->ui.track_count() == 2, "avec assez de place, la grosse loop s'ouvre");
+
+        // Pas de limite connue (0) : rien n'est refusé, même énorme.
+        auto h = make_mem();
+        h->lib.capacity    = 0;
+        h->lib.frames_of[0] = 0xFFFFFFF0u;
+        open_list(*h);
+        h->feed({InputEvent::ok()});
+        CHECK(h->ui.current_loop() == 0 && h->ui.track_count() == 2, "sans limite connue : aucune loop refusée");
+
+        // Les calculs sont en 64 bits : 2^31 images stéréo = 8 Gio, qui reviendraient à 0 en 32 bits.
+        auto i = make_mem();
+        i->lib.capacity       = 4000;
+        i->lib.frames_of[0]   = 0x80000000u;
+        i->lib.channels_of[0] = 2;
+        open_list(*i);
+        i->feed({InputEvent::ok()});
+        CHECK(i->ui.view() == UiController::View::Loops && std::strcmp(i->ui.notice(), " Memoire pleine") == 0, "8 Gio : refusée (pas de dépassement de 32 bits)");
+
+        // Un en-tête illisible ne compte pas ; un sample absent non plus ; un même sample sur deux pistes compte deux fois.
+        auto j = make_mem();
+        j->lib.capacity = 2000;  // Kick seul tient
+        j->lib.info_fails = {1};  // Snare : en-tête illisible, on ne sait pas la mesurer
+        open_list(*j);
+        j->feed({InputEvent::ok()});
+        CHECK(j->ui.current_loop() == 0, "un en-tête illisible n'est pas compté (2000 octets pour la seule Kick)");
+
+        auto k = make_mem();
+        k->lib.capacity = 2000;
+        k->lib.names    = {"Kick1.wav", "HH.wav"};  // Snare1.wav a disparu : sa piste n'est pas comptée
+        open_list(*k);
+        k->feed({InputEvent::ok()});
+        CHECK(k->ui.current_loop() == 0, "un sample absent n'est pas compté");
+
+        auto m = make_mem();
+        m->store.file.loops[0].track_count = 2;
+        m->store.file.loops[0].tracks[1].sample = 0;  // deux pistes sur Kick : 2 × 2000 octets
+        m->ui.load_profile();
+        m->lib.capacity = 3999;
+        open_list(*m);
+        m->feed({InputEvent::ok()});
+        CHECK(m->ui.view() == UiController::View::Loops && std::strcmp(m->ui.notice(), " Memoire pleine") == 0, "le même sample sur deux pistes est compté deux fois");
+        m->lib.capacity = 4000;
+        m->feed({InputEvent::ok()});
+        CHECK(m->ui.current_loop() == 0, "...et tient dans 4000");
+
+        // Stéréo = 2 canaux ; 16 bits = 2 octets.
+        auto n = make_mem();
+        n->lib.capacity = 2399;  // HH seul : 200 octets, deux fois la loop 2 : on vérifie surtout l'unité
+        open_list(*n);
+        n->feed({InputEvent::wheel(1), InputEvent::ok()});
+        CHECK(n->ui.current_loop() == 1, "100 images mono = 200 octets tiennent");
+        n->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        n->lib.capacity = 199;
+        n->feed({InputEvent::ok()});  // le curseur est sur la loop 2
+        CHECK(n->ui.view() == UiController::View::Loops && std::strcmp(n->ui.notice(), " Memoire pleine") == 0, "100 images mono ne tiennent pas dans 199 octets");
     }
 
     // ----- Vélocité et pitch par pas : sauvegarde, chargement, ordre des commandes -----
@@ -519,7 +873,9 @@ int main() {
         fill_custom(f->store.file);
         f->store.exists = true;
         f->ui.load_profile();
-        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
+        f->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        f->sink.sent.clear();  // le ClearAll de l'entrée dans la liste
+        f->feed({InputEvent::ok()});
         const auto& s = f->sink.sent;
         CHECK(!f->ui.loading() && s.size() == 19, "19 commandes : 2 + (4+4) + 4 + (4+1)");
         if (s.size() == 19) {
@@ -550,6 +906,7 @@ int main() {
         g->store.exists = true;
         g->ui.load_profile();
         g->feed({InputEvent::wheel(-5), InputEvent::ok()});
+        g->sink.sent.clear();  // le ClearAll de l'entrée dans la liste
         g->sink.budget = 5;
         g->feed({InputEvent::ok()});
         int ticks = 0;
@@ -568,32 +925,6 @@ int main() {
                   saved.loops[0].tracks[0].step_pitch[0] == -5 && saved.loops[0].tracks[0].step_pitch[3] == 7 &&
                   saved.loops[0].tracks[2].step_velocity[2] == 64 && saved.loops[0].tracks[1].step_velocity[0] == 127,
               "recharger puis sauvegarder : les valeurs par pas sont conservées");
-    }
-    {
-        // Une piste dont le sample manque est sautée : les réglages des suivantes visent la bonne piste du moteur.
-        auto f = make();
-        ProfileData& p = f->store.file;
-        p              = ProfileData{};
-        p.add_sample("Kick1.wav");
-        p.add_sample("Snare1.wav");
-        p.add_sample("HH.wav");
-        p.loop_count           = 1;
-        p.loops[0].track_count = 3;
-        p.loops[0].tracks[0].sample = 0;
-        p.loops[0].tracks[1].sample = 1;  // sera introuvable
-        p.loops[0].tracks[1].step_pitch[0] = 5;
-        p.loops[0].tracks[2].sample = 2;
-        p.loops[0].tracks[2].step_velocity[2] = 64;
-        f->store.exists = true;
-        f->lib.names    = {"Kick1.wav", "HH.wav"};
-        f->ui.load_profile();
-        f->feed({InputEvent::wheel(-5), InputEvent::ok(), InputEvent::ok()});
-        const auto& s = f->sink.sent;
-        CHECK(s.size() == 2 + 4 + 5 && f->ui.track_count() == 2, "2 pistes chargées, leurs commandes seulement");
-        CHECK(s.back().type == Command::SetStepVelocity && s.back().track == 1 && s.back().step == 2 && s.back().value == 64.0f,
-              "la vélocité de la 3e piste vise la piste moteur 1 (la 2e est sautée)");
-        CHECK(f->sink.count(Command::SetStepPitch) == 0, "les réglages de la piste sautée ne sont pas envoyés");
-        CHECK(f->ui.step_velocity(1, 2) == 64, "modèle : la piste HH garde sa vélocité");
     }
     {
         // add_track : réglages par pas fournis (bornés), ou valeurs par défaut.

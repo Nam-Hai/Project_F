@@ -298,3 +298,9 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - dépend de: B-200
 - références: plan_teensy.md#T19
 - terminé quand: interrupteur général, prise USB accessible, qualité de l'alimentation (bruit) : à décider.
+
+### B-309 Passer les textes de l'écran en anglais
+- statut: parked · priorité: 3 · propriétaire: claude · étiquettes: ui, core
+- dépend de: —
+- références: CLAUDE.md ; core/ui/ui_controller.cpp ; tests/ (tests d'interface et tests de rendu de référence)
+- terminé quand: tous les textes dessinés dans le `Canvas` (menus, messages d'erreur comme « Pas de carte » / « Echec sauvegarde », libellés des réglages) sont en anglais, sans accents si la police 5x7 ne les gère pas ; les tests d'interface et les rendus de référence sont mis à jour. À faire à terme, pas avant la mise en route sur la carte. Les nouveaux textes d'écran restent en français d'ici là, pour rester cohérents.

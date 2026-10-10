@@ -16,7 +16,8 @@ Ce fichier décrit le **flux de travail voulu**, pas un protocole à appliquer �
 - **Les décisions vivent dans les plans** (`plan_*.md`, `plan_teensy.md` pour la Teensy), pas dans le backlog. Quand une décision change, le plan est mis à jour, pas seulement le code.
 
 ## Règles du projet
-- Conversation, plans (`plan_*.md`), `backlog.md` et commentaires du code en français (c'est déjà la convention du dépôt). **Le code lui-même est en anglais** : identifiants, noms de fichiers, de tests, de champs, de commandes et messages de commit. Seuls les textes affichés à l'utilisateur de l'appareil suivent ce qui existe déjà. Ne pas expliquer plus que ce qui est demandé.
+- **Tout ce qui fait partie du code base est en anglais** : identifiants, commentaires, noms de fichiers, de tests, de champs et de commandes, messages de commit, `README.md`. Les textes dessinés à l'écran de l'appareil sont encore en français et le restent d'ici là (passage à l'anglais prévu : `B-309`). (Les commentaires déjà écrits en français sont à traduire petit à petit ; en attendant, tout nouveau commentaire est en anglais, et un commentaire modifié est traduit au passage ; on ne fait pas de passe globale.)
+- **Conversation, plans (`plan_*.md`) et `backlog.md` en français.** Ne pas expliquer plus que ce qui est demandé.
 - Ne pas commiter : l'utilisateur le fait lui-même.
 - Demander avant d'installer quoi que ce soit (par exemple `brew install platformio`).
 - `core/` reste portable : pas d'allocation dynamique ni de STL dans le chemin audio, seulement `cstdint`, `cmath`, `cstring`, `atomic`, `cstdio`.

@@ -82,6 +82,7 @@ Question de l'utilisateur : le 128 x 64 monochrome reste petit ; un écran IPS �
   4. *Partager* — **décidé** : les samples identiques sont partagés entre pistes (table « chemin -> emplacement » le temps de l'ouverture d'une loop ; facile avec une arène).
   5. *Écoute* — **décidé** : zone séparée et réutilisée, échantillons tronqués (par exemple 2 secondes).
   6. *Fichiers refusés* — **décidé** : la Teensy **ne convertit jamais à la volée** (ni rééchantillonnage ni conversion de profondeur). Un fichier au mauvais format est simplement absent de la liste. Un **outil de conversion sur PC** (script autour d'`afconvert`) est une idée **de très basse priorité** : l'utilisateur peut corriger ses fichiers lui-même en regardant ce qu'il ajoute.
+* **Réalisé le 11/10/2026 (B-020)** : `core/wav/wav_header.*` lit l'en-tête seule par accès à une position (`FileReader`) ; `load_wav` lit les données par morceaux de 4 Ko ; la bibliothèque de l'émulateur ne lit plus que les en-têtes. **Fait aussi (B-021)** : `wav::SampleReader` lit les données par morceaux de 4 Ko, converties à la volée en 16 bits dans une zone fournie par l'appelant (partagé PC et Teensy). Reste : l'arène (B-022 et suivants).
 * **Conséquences** : `SampleLibrary`, `SampleBank`, `load_wav`, la vue « Samples » de l'interface (navigation dans les dossiers), le plan mémoire, `ProfileData` (taille des noms de samples).
 
 ### T7. Profil sur la carte : format et flux — `décidé` (10/10/2026) : binaire partout, JSON seulement par un outil

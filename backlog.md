@@ -18,10 +18,11 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - **Phases** (anciennement « P0, P1, P2 » de `plan_teensy.md`) : étiquettes `phase-0`, `phase-1`, `phase-2`. Les priorités sont des chiffres pour ne pas confondre les deux.
 
 ## Prêt maintenant
-*(à jour au 10/10/2026)*
+*(à jour au 11/10/2026)*
 - **B-001** Commander le matériel (utilisateur, priorité 1)
 - **B-060** Reprise de la carte SD (`.tmp` / `.bak` + CRC) (priorité 1)
-- **B-020** Lecture d'en-tête WAV seule (priorité 1)
+- **B-022** Arène de samples (`SampleArena`) (priorité 1)
+- **B-025** `SampleLibrary` à chemins relatifs (priorité 3)
 - **B-030** Fonction « afficher ce Canvas » isolée (priorité 2)
 - **B-040** Protocole d'événements de la télécommande (priorité 2)
 - **B-070** Journal d'erreurs sur la carte (priorité 3)
@@ -71,16 +72,22 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 
 
 ### B-020 Lecture d'en-tête WAV seule
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core
+- statut: done · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core
 - dépend de: —
 - références: plan_teensy.md#T6 ; platform/desktop/sample_loader.*
 - terminé quand: une fonction lit seulement l'en-tête (format, canaux, fréquence, nombre d'échantillons) sans charger les données ; testée sur les formats déjà gérés.
+- décisions (discussion du 11/10/2026) : analyse de l'en-tête dans `core/wav/` (portable, sans allocation) par accès à une position donnée (`FileReader::read_at` + `size`), mêmes règles que `load_wav` d'aujourd'hui ; `load_wav` réécrit par-dessus (comportement identique, lecture des données par morceaux de 4 Ko) ; `DesktopSampleLibrary::refresh` ne lit plus que l'en-tête.
+- vérifié (11/10/2026) : `core/wav/wav_header.{h,cpp}` (`wav::read_header`, interface `FileReader` : `size()` + `read_at(position, tampon, taille)`, `MemoryFile` pour les tests ; 720 octets de code sur la Teensy, aucune variable statique) ; mêmes règles qu'avant (RIFF/WAVE, PCM 16 bits ou flottant 32 bits, extensible, 1 ou 2 canaux, 44 100 Hz, blocs sautés avec leur octet de remplissage, fichier tronqué toléré) avec en plus au plus 64 blocs parcourus et aucun dépassement de 32 bits. `platform/desktop/stdio_file.h` (`StdioFile`). `load_wav` réécrit par-dessus : même comportement (les 29 vérifications de `test_wav` passent sans modification), les données sont lues et converties par morceaux de 4 Ko au lieu de charger tout le fichier. Nouvelle fonction `probe_wav` ; `DesktopSampleLibrary::refresh` ne lit plus que l'en-tête de chaque fichier (un WAV sans aucune image reste ignoré). Nouveau test `test_wav_header` : tous les formats acceptés et refusés, champs lus à leur place, blocs intercalés, tailles fausses (tronqué, 0xFFFFFFFF, 4 Go, bloc de 16 Mo), limite de 64 blocs, **un en-tête de 2 Mo de données se lit avec moins de 100 octets, un bloc LIST de 500 Ko est sauté sans être lu**, erreurs d'entrée-sortie, tous les préfixes de fichiers valides, 30 000 en-têtes abîmés. ASan et UBSan propres. Mutations : 52 tuées sur 54 ; les 2 restantes sont équivalentes (lecture d'un 12e octet non initialisé qui ne peut pas valoir « E », et coupure exactement à 15 octets qui donne le même résultat par un autre chemin). Compilation Teensy sans avertissement. Les 27 tests passent.
+
 
 ### B-021 Lecteur WAV par morceaux
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, samples, core
+- statut: done · priorité: 2 · propriétaire: claude · étiquettes: phase-0, samples, core
 - dépend de: B-020
 - références: plan_teensy.md#T6
 - terminé quand: interface commune de lecture par morceaux (sans allocation), implémentée sur le Mac, avec test de résultat identique au chargement complet.
+- décisions (discussion du 11/10/2026) : `wav::SampleReader` dans `core/wav/` : un lecteur qu'on appelle morceau par morceau (`read(dst, max_images)`, il garde son avancement), lecture de 4 Ko à la fois, conversion à la volée en 16 bits entrelacé, écriture dans une zone fournie par l'appelant ; la conversion flottant → 16 bits quitte `platform/desktop/` pour `core/` ; `load_wav` du Mac s'appuie dessus.
+- vérifié (11/10/2026) : `core/wav/wav_reader.{h,cpp}` : `wav::SampleReader` (`read(dst, max_images)`, `frames_left()`, `failed()`) lit le fichier 4 Ko à la fois (tampon de 4 Ko sur la pile, aucune allocation), convertit à la volée en 16 bits entrelacé et écrit dans la zone fournie ; `wav::float_bits_to_int16` (arrondi, écrêté, non-nombre → 0) sort de `platform/desktop/sample_loader.cpp` pour aller dans `core/`. `load_wav` du Mac s'appuie dessus (un seul code pour les deux plateformes) ; les 29 vérifications de `test_wav` passent sans modification. Compilation Teensy sans avertissement (1,3 Ko de code pour les deux fichiers de `core/wav/`). Nouveau test `test_wav_reader` : conversion flottant → 16 bits (valeurs clés, arrondi des deux côtés, écrêtage, infinis, non-nombres, dénormalisé, 54 000 valeurs contre une référence, monotone), PCM identique, flottant mono et stéréo, lecture par morceaux de 1 à 9 999 images identique à la lecture d'un coup (4 formats, données décalées par un bloc LIST), **aucune requête au fichier au-delà de 4 Ko et chaque octet de données demandé une seule fois**, lecture partielle (les 2 premières secondes pour l'écoute), fichier qui rétrécit en cours de lecture (seules les images entières avant la coupure sont livrées, puis échec), lecteur qui reste en échec même si le fichier répond de nouveau, en-tête refusé ou format inconnu, 5 secondes stéréo flottant. ASan et UBSan propres. Mutations : 43 changements, 37 tuées ; les 6 restantes sont équivalentes (`>=` ou `>` à la valeur exacte d'une borne, garde sur NaN dont le résultat est 0 par hasard sur cette plateforme, gardes redondantes avec la boucle, `+ 0`) ; deux gardes redondantes ont été retirées du code. Les 28 tests passent.
+
 
 ### B-022 Arène de samples (`SampleArena`)
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core

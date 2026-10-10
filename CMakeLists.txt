@@ -18,6 +18,8 @@ add_library(core STATIC
   core/sequencer.cpp
   core/synth_kick.cpp
   core/ui/canvas.cpp
+  core/wav/wav_header.cpp
+  core/wav/wav_reader.cpp
   core/ui/ui_controller.cpp
 )
 target_include_directories(core PUBLIC ${CMAKE_SOURCE_DIR})
@@ -114,6 +116,14 @@ add_test(NAME ui COMMAND test_ui)
 add_executable(test_profile tests/test_profile.cpp)
 target_link_libraries(test_profile PRIVATE core)
 add_test(NAME profile COMMAND test_profile)
+
+add_executable(test_wav_reader tests/test_wav_reader.cpp)
+target_link_libraries(test_wav_reader PRIVATE core)
+add_test(NAME wav_reader COMMAND test_wav_reader)
+
+add_executable(test_wav_header tests/test_wav_header.cpp)
+target_link_libraries(test_wav_header PRIVATE core)
+add_test(NAME wav_header COMMAND test_wav_header)
 
 add_executable(test_profile_binary tests/test_profile_binary.cpp)
 target_link_libraries(test_profile_binary PRIVATE core)

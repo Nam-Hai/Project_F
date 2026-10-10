@@ -34,12 +34,11 @@ void DesktopSampleLibrary::refresh() {
         if (name.empty() || name[0] == '.') continue;
         if (lower(entry.path().extension().string()) != ".wav") continue;
 
-        // On vérifie le format tout de suite : seuls les fichiers utilisables sont proposés.
-        std::vector<int16_t> probe;
-        std::string          error;
-        int                  channels = 1;
-        if (!load_wav(entry.path().string().c_str(), probe, channels, error) || probe.empty()) {
-            std::fprintf(stderr, "Sample ignoré : %s (%s)\n", name.c_str(), error.c_str());
+        // The format is checked right away, from the header alone (the sound data is not read): only usable files are offered.
+        wav::Info   info;
+        std::string error;
+        if (!probe_wav(entry.path().string().c_str(), info, error) || info.frames == 0) {
+            std::fprintf(stderr, "Sample ignoré : %s (%s)\n", name.c_str(), info.frames == 0 && error.empty() ? "aucune donnée" : error.c_str());
             continue;
         }
         names_.push_back(name);

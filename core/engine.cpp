@@ -46,8 +46,19 @@ void Engine::clear_track(int track) {
     release_sample(track);
     gains_[track] = 1.0f;
     players_[track].set_stereo_width(0);
+    env_[track] = Envelope{};
+    players_[track].set_envelope(env_[track].attack, env_[track].decay, env_[track].sustain, env_[track].release);
     track_balance_[track] = 0;
     seq_.pattern().reset_track(track);  // pas, vélocités et pitchs par défaut
+}
+
+// Change un des quatre réglages de l'enveloppe d'une piste (arrondi, borné à 0..max) et les transmet au lecteur.
+void Engine::set_envelope(int track, int Envelope::*field, float value, int max) {
+    int v = static_cast<int>(std::lround(value));
+    if (v < 0) v = 0;
+    if (v > max) v = max;
+    env_[track].*field = v;
+    players_[track].set_envelope(env_[track].attack, env_[track].decay, env_[track].sustain, env_[track].release);
 }
 
 static int clamp_pan(int pan) {
@@ -113,6 +124,18 @@ void Engine::apply(const Command& c) {
             if (track_ok) players_[c.track].set_stereo_width(v);
             break;
         }
+        case Command::SetTrackAttack:
+            if (track_ok) set_envelope(c.track, &Envelope::attack, c.value, cfg::ENV_MS_MAX);
+            break;
+        case Command::SetTrackDecay:
+            if (track_ok) set_envelope(c.track, &Envelope::decay, c.value, cfg::ENV_MS_MAX);
+            break;
+        case Command::SetTrackSustain:
+            if (track_ok) set_envelope(c.track, &Envelope::sustain, c.value, 100);
+            break;
+        case Command::SetTrackRelease:
+            if (track_ok) set_envelope(c.track, &Envelope::release, c.value, cfg::ENV_MS_MAX);
+            break;
         case Command::SetTrackBalance:
             if (track_ok) track_balance_[c.track] = static_cast<int8_t>(clamp_pan(static_cast<int>(std::lround(c.value))));
             break;

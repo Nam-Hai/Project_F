@@ -23,6 +23,7 @@ public:
 
     void hline(int x, int y, int w, bool on = true);
     void vline(int x, int y, int h, bool on = true);
+    void line(int x0, int y0, int x1, int y1, bool on = true);  // segment de Bresenham, extrémités comprises
     void rect(int x, int y, int w, int h, bool fill = false, bool on = true);
     void invert_rect(int x, int y, int w, int h);
 

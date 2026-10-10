@@ -29,6 +29,11 @@ constexpr int   QUANTIZE_MAX     = 100;
 constexpr int   PAN_MIN          = -50;
 constexpr int   PAN_MAX          = 50;
 
+// Enveloppe ADSR d'une piste : temps en millisecondes (0 = immédiat), sustain en %. Par défaut, un Release court
+// (5 ms) fait finir la note remplacée en douceur au lieu de la couper net (plus de clic).
+constexpr int   ENV_MS_MAX               = 2000;
+constexpr int   ENV_DEFAULT_RELEASE_MS   = 5;
+
 // Largeur stéréo d'une piste : -100 (mono complet) à +100 (côtés doublés), 0 = sample inchangé.
 constexpr int   WIDTH_MIN        = -100;
 constexpr int   WIDTH_MAX        = 100;

@@ -76,7 +76,7 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 | Écran | OLED monochrome 128x64 (SSD1306, I2C ou SPI) | 1 | Affichage de l'interface |
 | Encodeur rotatif | Encodeur incrémental (« roue », avec ou sans poussoir) | 1 | Navigation dans les listes, réglage des valeurs |
 | Boutons de pas / touches blanches | Boutons-poussoirs alignés | 16 | 16 pas du pattern ; touches blanches du clavier de piano |
-| Boutons de touches noires | Boutons-poussoirs, placés au-dessus des blancs et décalés | 10 | Touches noires du clavier de piano (la **10e** passe en mode Clavier / Rec) ; dans la vue Pattern, les touches 2 à 4, **tenues**, règlent Quantifier, Wide (largeur stéréo) et Balance de la piste (le firmware doit lire l'appui et le relâchement) |
+| Boutons de touches noires | Boutons-poussoirs, placés au-dessus des blancs et décalés | 10 | Touches noires du clavier de piano (la **10e** passe en mode Clavier / Rec) ; dans la vue Pattern, les touches 2 à 4, **tenues**, règlent Quantifier, Wide (largeur stéréo) et Balance de la piste, et les touches 5 à 8 l'enveloppe ADSR de la piste (le firmware doit lire l'appui et le relâchement) |
 | Boutons de commande | Boutons-poussoirs | 5 | Valider, Back, Menu, Mode, Play/Stop |
 | Potentiomètre BPM | $10\text{ k}\Omega$ linéaire | 1 | Tempo |
 
@@ -95,4 +95,4 @@ Afin d'éliminer le bruit de découpage haute fréquence ($>20\text{ kHz}$) et d
 * **Total : 31 boutons-poussoirs**, une roue, un potard, un écran OLED. Les boutons de pas n'ont **pas de LED** dans la première version (le retour passe par l'écran).
 * **Disposition du clavier** : les 10 boutons noirs sont au-dessus des 16 boutons de pas, décalés entre deux blanches comme sur un piano (voir `plan_keyboard.md`).
 * **Câblage** : 31 boutons, c'est assez pour envisager soit un câblage direct, soit une **matrice de boutons** ; le choix, avec le décompte des broches libres de la Teensy 4.1 (I2S, écran, encodeur, potard, SD déjà pris), est à faire lors de la conception.
-* **Étiquettes** : des inscriptions près des touches noires de réglage (« Quant », « Wide », « Bal » : touches 2 à 4) et de la 10e (« Rec ») sont utiles, puisque ces raccourcis n'ont pas de ligne de menu.
+* **Étiquettes** : des inscriptions près des touches noires de réglage (« Quant », « Wide », « Bal » : touches 2 à 4 ; « A », « D », « S », « R » : touches 5 à 8) et de la 10e (« Rec ») sont utiles, puisque ces raccourcis n'ont pas de ligne de menu.

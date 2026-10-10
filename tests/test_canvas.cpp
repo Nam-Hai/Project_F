@@ -150,6 +150,57 @@ int main() {
         CHECK(count_on(sp) == 0, "espace vide");
     }
 
+    // Segments : Bresenham, extrémités comprises, dans les deux sens, hors écran sans plantage.
+    {
+        Canvas c;
+        c.line(2, 3, 9, 3);
+        CHECK(ascii(c, 0, 2, 12, 3) == "............\n..########..\n............\n", "ligne horizontale, extrémités comprises");
+        Canvas v;
+        v.line(4, 1, 4, 5);
+        CHECK(count_on(v) == 5 && v.get_pixel(4, 1) && v.get_pixel(4, 5) && !v.get_pixel(4, 6), "ligne verticale");
+        Canvas p;
+        p.line(7, 7, 7, 7);
+        CHECK(count_on(p) == 1 && p.get_pixel(7, 7), "un seul point");
+        Canvas d;
+        d.line(0, 0, 4, 4);
+        bool diag = count_on(d) == 5;
+        for (int i = 0; i < 5; ++i) diag = diag && d.get_pixel(i, i);
+        CHECK(diag, "diagonale à 45 degrés");
+        Canvas f1, f2;
+        f1.line(3, 10, 40, 22);
+        f2.line(40, 22, 3, 10);
+        CHECK(std::memcmp(f1.data(), f2.data(), Canvas::BYTES) == 0, "mêmes pixels dans les deux sens");
+        CHECK(f1.get_pixel(3, 10) && f1.get_pixel(40, 22), "extrémités allumées");
+        // Pente douce : un pixel par colonne ; pente raide : un pixel par rangée.
+        Canvas g;
+        g.line(0, 0, 10, 3);
+        bool one_per_col = true;
+        for (int x = 0; x <= 10; ++x) {
+            int n = 0;
+            for (int y = 0; y < 5; ++y) n += g.get_pixel(x, y);
+            one_per_col = one_per_col && n == 1;
+        }
+        CHECK(one_per_col, "pente douce : un pixel par colonne");
+        Canvas st;
+        st.line(0, 0, 3, 10);
+        bool one_per_row = true;
+        for (int y = 0; y <= 10; ++y) {
+            int n = 0;
+            for (int x = 0; x < 5; ++x) n += st.get_pixel(x, y);
+            one_per_row = one_per_row && n == 1;
+        }
+        CHECK(one_per_row, "pente raide : un pixel par rangée");
+        Canvas e;
+        e.line(5, 20, 8, 20, false);
+        e.line(-10, -10, 200, 100);
+        e.line(60, 30, 60, 30, false);
+        CHECK(count_on(e) > 0, "hors écran : dessiné où ça tient, sans plantage");
+        Canvas off;
+        off.rect(0, 0, 128, 64, true);
+        off.line(10, 10, 20, 10, false);
+        CHECK(!off.get_pixel(15, 10) && off.get_pixel(15, 11) && off.get_pixel(9, 10), "ligne en négatif (éteint)");
+    }
+
     // Écran complet de référence (pour la lecture à l'oeil : `test_canvas --show`).
     // Vérifie ici seulement que les 8 lignes de 21 caractères tiennent à l'écran.
     {

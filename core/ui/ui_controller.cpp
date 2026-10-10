@@ -457,23 +457,91 @@ bool UiController::shift_step_notes(Track& t, int s, int delta) {
 
 // Touche noire de réglage relâchée : on revient à l'état d'avant (si une autre est encore tenue, c'est elle qui règle).
 void UiController::on_black_up(int index) {
-    if (index < 1 || index > 3) return;
+    if (index < 1 || index > 7) return;
     held_mask_ = static_cast<uint8_t>(held_mask_ & ~(1u << index));
 
-    const TrackSetting released = index == 1 ? TrackSetting::Quantize : index == 2 ? TrackSetting::Width : TrackSetting::Balance;
-    if (setting_ != released) return;
+    if (setting_ != setting_for_key(index)) return;
     setting_ = TrackSetting::None;
-    for (int k = 3; k >= 1; --k) {
+    for (int k = 7; k >= 1; --k) {
         if ((held_mask_ >> k) & 1u) {
-            setting_ = k == 1 ? TrackSetting::Quantize : k == 2 ? TrackSetting::Width : TrackSetting::Balance;
+            setting_ = setting_for_key(k);
             break;
         }
     }
 }
 
+// Réglage de piste porté par une touche noire de la vue Pattern : 1 Quantifier, 2 Wide, 3 Balance, 4 à 7 Attack,
+// Decay, Sustain, Release.
+UiController::TrackSetting UiController::setting_for_key(int index) {
+    switch (index) {
+        case 1:  return TrackSetting::Quantize;
+        case 2:  return TrackSetting::Width;
+        case 3:  return TrackSetting::Balance;
+        case 4:  return TrackSetting::Attack;
+        case 5:  return TrackSetting::Decay;
+        case 6:  return TrackSetting::Sustain;
+        case 7:  return TrackSetting::Release;
+        default: return TrackSetting::None;
+    }
+}
+
+// Valeurs proposées à la roue pour Attack, Decay et Release (ms) : fines près de 0, plus larges ensuite.
+static const int ENV_STEPS_MS[] = {0, 1, 2, 3, 5, 7, 10, 15, 20, 30, 40, 50, 70, 100, 150, 200, 300, 500, 700, 1000, 1500, 2000};
+
+// La roue sur Attack, Decay, Release : un cran = la valeur suivante (ou précédente) de la liste ; une valeur qui n'y
+// est pas (venue d'un fichier) passe d'abord à la plus proche dans le sens du mouvement. Sustain : 5 % par cran.
+void UiController::adjust_envelope(int delta) {
+    Track& t = tracks_[selected_];
+    Command c;
+    c.track = t.engine_track;
+    int value;
+
+    if (setting_ == TrackSetting::Sustain) {
+        value = t.sustain + delta * TRACK_PAN_PER_NOTCH;
+        if (value < 0) value = 0;
+        if (value > 100) value = 100;
+        if (value == t.sustain) return;
+        c.type = Command::SetTrackSustain;
+    } else {
+        const int current = setting_ == TrackSetting::Attack ? t.attack : setting_ == TrackSetting::Decay ? t.decay : t.release;
+        constexpr int N   = static_cast<int>(sizeof ENV_STEPS_MS / sizeof ENV_STEPS_MS[0]);
+        value             = current;
+        for (int k = delta > 0 ? delta : -delta; k > 0; --k) {
+            int next = value;
+            if (delta > 0) {
+                next = ENV_STEPS_MS[N - 1];
+                for (int i = N - 1; i >= 0; --i)
+                    if (ENV_STEPS_MS[i] > value) next = ENV_STEPS_MS[i];
+                if (value >= ENV_STEPS_MS[N - 1]) next = value;
+            } else {
+                next = ENV_STEPS_MS[0];
+                for (int i = 0; i < N; ++i)
+                    if (ENV_STEPS_MS[i] < value) next = ENV_STEPS_MS[i];
+                if (value <= ENV_STEPS_MS[0]) next = value;
+            }
+            value = next;
+        }
+        if (value == current) return;
+        c.type = setting_ == TrackSetting::Attack ? Command::SetTrackAttack : setting_ == TrackSetting::Decay ? Command::SetTrackDecay : Command::SetTrackRelease;
+    }
+    c.value = static_cast<float>(value);
+    if (!sink_.push(c)) return;
+    switch (setting_) {
+        case TrackSetting::Attack:  t.attack  = static_cast<uint16_t>(value); break;
+        case TrackSetting::Decay:   t.decay   = static_cast<uint16_t>(value); break;
+        case TrackSetting::Sustain: t.sustain = static_cast<uint8_t>(value); break;
+        default:                    t.release = static_cast<uint16_t>(value); break;
+    }
+    mark_dirty();
+}
+
 // Réglage de la piste tenu : la roue change la valeur par pas de 5 (la force de quantification en %, le pan
 // et la balance de la piste en points), avec effet immédiat.
 void UiController::adjust_track_setting(int delta) {
+    if (setting_ >= TrackSetting::Attack) {
+        adjust_envelope(delta);
+        return;
+    }
     Track&  t = tracks_[selected_];
     Command c;
     c.track = t.engine_track;
@@ -532,9 +600,9 @@ void UiController::on_black(int index) {
         play_key(keyboard::BLACK_PITCH[index]);
         return;
     }
-    if (view_ == View::Pattern && index >= 1 && index <= 3) {  // tenir : règle Quantifier, Pan ou Balance de la piste
+    if (view_ == View::Pattern && index >= 1 && index <= 7) {  // tenir : règle un paramètre de la piste (voir setting_for_key)
         held_mask_ = static_cast<uint8_t>(held_mask_ | (1u << index));
-        setting_   = index == 1 ? TrackSetting::Quantize : index == 2 ? TrackSetting::Width : TrackSetting::Balance;
+        setting_   = setting_for_key(index);
         audition_pending_ = false;
         return;
     }
@@ -917,6 +985,10 @@ void UiController::load_loop(int slot) {
         t.quantize      = td.quantize;
         t.width        = td.width;
         t.balance      = td.balance;
+        t.attack       = td.attack;
+        t.decay        = td.decay;
+        t.sustain      = td.sustain;
+        t.release      = td.release;
         for (int st = 0; st < cfg::MAX_STEPS; ++st) {
             t.step_pan[st]    = td.step_pan[st];
             t.step_offset[st] = td.step_offset[st];
@@ -951,7 +1023,8 @@ void UiController::load_loop(int slot) {
 // qui s'écarte de la valeur par défaut, une par note supplémentaire, une pour la quantification si elle
 // n'est pas nulle.
 int UiController::count_extras(const profile::TrackData& td) {
-    int n = (td.quantize != 0) + (td.width != 0) + (td.balance != 0);
+    int n = (td.quantize != 0) + (td.width != 0) + (td.balance != 0) + (td.attack != 0) + (td.decay != 0) + (td.sustain != 100) +
+            (td.release != cfg::ENV_DEFAULT_RELEASE_MS);
     for (int s = 0; s < cfg::MAX_STEPS; ++s) {
         n += td.step_velocity[s] != cfg::VELOCITY_MAX;
         n += td.step_pitch[s] != 0;
@@ -1030,6 +1103,26 @@ bool UiController::extra_command(const profile::TrackData& td, int index, int tr
     if (td.balance != 0 && index-- == 0) {
         c.type  = Command::SetTrackBalance;
         c.value = static_cast<float>(td.balance);
+        return true;
+    }
+    if (td.attack != 0 && index-- == 0) {
+        c.type  = Command::SetTrackAttack;
+        c.value = static_cast<float>(td.attack);
+        return true;
+    }
+    if (td.decay != 0 && index-- == 0) {
+        c.type  = Command::SetTrackDecay;
+        c.value = static_cast<float>(td.decay);
+        return true;
+    }
+    if (td.sustain != 100 && index-- == 0) {
+        c.type  = Command::SetTrackSustain;
+        c.value = static_cast<float>(td.sustain);
+        return true;
+    }
+    if (td.release != cfg::ENV_DEFAULT_RELEASE_MS && index-- == 0) {
+        c.type  = Command::SetTrackRelease;
+        c.value = static_cast<float>(td.release);
         return true;
     }
     return false;
@@ -1137,6 +1230,10 @@ bool UiController::build_loop(profile::LoopData& out) {
         td.quantize = t.quantize;
         td.width    = t.width;
         td.balance  = t.balance;
+        td.attack   = t.attack;
+        td.decay    = t.decay;
+        td.sustain  = t.sustain;
+        td.release  = t.release;
     }
     return true;
 }
@@ -1289,10 +1386,11 @@ void UiController::render(Canvas& c) const {
             // est donc coupé à 13 caractères dans cette vue.
             // Un réglage de la piste tenu (touche noire) remplace la lettre par son nom, plus long : titre coupé à 8.
             static const char* const LETTERS[] = {"E", "V", "P", "T", "B"};
-            static const char* const SETTINGS[] = {"", "Quant", "Wide", "Bal"};
+            static const char* const SETTINGS[] = {"", "Quant", "Wide", "Bal", "Atk", "Dec", "Sus", "Rel"};
             const bool held = setting_ != TrackSetting::None;
             render_header(c, tracks_[selected_].name, false, held ? SETTINGS[static_cast<int>(setting_)] : LETTERS[static_cast<int>(edit_mode_)], held ? 8 : 13);
-            render_pattern(c);
+            if (setting_ >= TrackSetting::Attack) render_envelope(c);  // la forme de l'enveloppe remplace la timeline
+            else render_pattern(c);
             break;
         }
         case View::Add:
@@ -1519,6 +1617,72 @@ void UiController::render_pattern(Canvas& c, bool timeline) const {
             else        std::snprintf(value, sizeof value, "%+d", p);
         }
         c.text(GAUGE_W + 4, GAUGE_Y, value);
+    }
+}
+
+// Temps d'un segment de l'enveloppe en largeur d'écran : logarithmique (0 ms = un pixel, 2000 ms = 27 pixels), pour
+// que les temps courts comme les longs restent lisibles.
+static int env_width(int ms) {
+    if (ms <= 0) return 1;
+    return 2 + static_cast<int>(std::lround(std::log2(1.0 + ms) * 2.3));
+}
+
+// Durée en texte court avec son unité : « 12ms » sous 100 ms, des dixièmes et centièmes de seconde sans zéro
+// devant au-dessus (« .3s », « .15s »), des secondes à partir de 1000 ms (« 1s », « 1.5s »). Au plus 4 caractères,
+// pour que la rangée des quatre valeurs tienne sur l'écran.
+static void time_text(char* dst, std::size_t cap, int ms) {
+    if (ms < 100) {
+        std::snprintf(dst, cap, "%dms", ms);
+    } else if (ms < 1000) {
+        const int hundredths = (ms + 5) / 10;  // 100..999 ms -> 10..100 centièmes
+        if (hundredths >= 100) std::snprintf(dst, cap, "1s");
+        else if (hundredths % 10 == 0) std::snprintf(dst, cap, ".%ds", hundredths / 10);
+        else std::snprintf(dst, cap, ".%02ds", hundredths);
+    } else {
+        const int tenths = (ms + 50) / 100;  // 1000..2000 ms -> 10..20 dixièmes
+        if (tenths % 10 == 0) std::snprintf(dst, cap, "%ds", tenths / 10);
+        else std::snprintf(dst, cap, "%d.%ds", tenths / 10, tenths % 10);
+    }
+}
+
+// Réglage de l'enveloppe tenu (touches noires 5 à 8) : la forme classique d'un ADSR (montée, descente, palier,
+// descente finale), avec le segment réglé en gras, et les quatre valeurs en bas, celle réglée en négatif.
+void UiController::render_envelope(Canvas& c) const {
+    const Track& t = tracks_[selected_];
+
+    constexpr int TOP = 16, BASE = 46, SUSTAIN_W = 20;
+    const int     wa = env_width(t.attack), wd = env_width(t.decay), wr = env_width(t.release);
+    const int     total = wa + wd + SUSTAIN_W + wr;
+    const int     x0    = (Canvas::W - total) / 2;
+    const int     ys    = BASE - (BASE - TOP) * t.sustain / 100;
+
+    const int xs[5] = {x0, x0 + wa, x0 + wa + wd, x0 + wa + wd + SUSTAIN_W, x0 + total};
+    const int ye[5] = {BASE, TOP, ys, ys, BASE};
+    for (int x = x0; x <= x0 + total; x += 4) c.set_pixel(x, BASE + 1);  // l'axe du temps, en pointillés
+
+    for (int seg = 0; seg < 4; ++seg) {
+        c.line(xs[seg], ye[seg], xs[seg + 1], ye[seg + 1]);
+        const bool active = (seg == 0 && setting_ == TrackSetting::Attack) || (seg == 1 && setting_ == TrackSetting::Decay) ||
+                            (seg == 2 && setting_ == TrackSetting::Sustain) || (seg == 3 && setting_ == TrackSetting::Release);
+        if (active) c.line(xs[seg] + 1, ye[seg], xs[seg + 1] + 1, ye[seg + 1]);  // en gras
+    }
+
+    // Les valeurs avec leur unité : A, D, R en durées (ms ou s), S en %.
+    char item[4][12];
+    char value[8];
+    time_text(value, sizeof value, t.attack);
+    std::snprintf(item[0], sizeof item[0], "A%s", value);
+    time_text(value, sizeof value, t.decay);
+    std::snprintf(item[1], sizeof item[1], "D%s", value);
+    std::snprintf(item[2], sizeof item[2], "S%d%%", t.sustain);
+    time_text(value, sizeof value, t.release);
+    std::snprintf(item[3], sizeof item[3], "R%s", value);
+    int x = 0;
+    for (int k = 0; k < 4; ++k) {
+        const bool active = (k == 0 && setting_ == TrackSetting::Attack) || (k == 1 && setting_ == TrackSetting::Decay) ||
+                            (k == 2 && setting_ == TrackSetting::Sustain) || (k == 3 && setting_ == TrackSetting::Release);
+        c.text(x, 6 * Canvas::CHAR_H + 4, item[k], active);
+        x += Canvas::text_width(item[k]) + 2;  // deux pixels entre deux valeurs : le pire cas (20 caractères) tient en 126
     }
 }
 

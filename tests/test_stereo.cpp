@@ -663,6 +663,7 @@ int main() {
             for (int16_t& v : held) v = 16384;
             Engine e;
             e.push(set_sample(2, held, 300));
+            e.push(cmd(Command::SetTrackRelease, 2, 0, 0.0f));  // coupe nette : on ne teste ici que la balance
             e.push(note(2));
             Out a = render(e, 50);
             e.push(cmd(Command::SetTrackBalance, 2, 0, -50.0f));

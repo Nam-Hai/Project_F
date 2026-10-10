@@ -16,6 +16,10 @@ struct Command {
         SetTrackPattern, // track, length = les 16 pas d'un coup (bit i = pas i)
         SetStepVelocity, // track, step, value = vélocité 1..127 (bornée)
         SetStepPitch,    // track, step, value = décalage en demi-tons -12..12 (borné)
+        SetTrackAttack,  // track, value = Attack de l'enveloppe ADSR de la piste, en ms (0..2000, borné)
+        SetTrackDecay,   // track, value = Decay, en ms (0..2000)
+        SetTrackSustain, // track, value = Sustain, en % (0..100)
+        SetTrackRelease, // track, value = Release, en ms (0..2000) : durée de la fin de la note remplacée par une nouvelle
         SetTrackWidth,   // track, value = largeur stéréo de la piste -100 (mono) .. +100 (côtés x2), 0 = inchangé (borné), agit en direct sur le sample
         SetTrackBalance, // track, value = balance de base de la piste -50..50 (borné), combinée avec celle de chaque note au déclenchement
         SetStepPan,      // track, step, value = panoramique de la note principale -50..50 (borné)

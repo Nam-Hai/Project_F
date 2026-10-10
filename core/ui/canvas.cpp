@@ -19,6 +19,27 @@ bool Canvas::get_pixel(int x, int y) const {
     return (buf_[(y >> 3) * W + x] >> (y & 7)) & 1;
 }
 
+void Canvas::line(int x0, int y0, int x1, int y1, bool on) {
+    const int dx = x1 > x0 ? x1 - x0 : x0 - x1;
+    const int dy = y1 > y0 ? y0 - y1 : y1 - y0;  // négatif
+    const int sx = x0 < x1 ? 1 : -1;
+    const int sy = y0 < y1 ? 1 : -1;
+    int       err = dx + dy;
+    for (;;) {
+        set_pixel(x0, y0, on);
+        if (x0 == x1 && y0 == y1) break;
+        const int e2 = 2 * err;
+        if (e2 >= dy) {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx) {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
 void Canvas::hline(int x, int y, int w, bool on) {
     for (int i = 0; i < w; ++i) set_pixel(x + i, y, on);
 }

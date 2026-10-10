@@ -109,6 +109,16 @@ private:
     const int16_t* preview_sample_ = nullptr;
     SamplePlayer   players_[cfg::MAX_TRACKS];
     int8_t         track_balance_[cfg::MAX_TRACKS] = {};  // balance de base de chaque piste, -50..50
+
+    // Enveloppe ADSR de chaque piste (A, D, R en ms, S en %) : une commande en change un, le lecteur reçoit les quatre.
+    struct Envelope {
+        int attack  = 0;
+        int decay   = 0;
+        int sustain = 100;
+        int release = cfg::ENV_DEFAULT_RELEASE_MS;
+    };
+    Envelope env_[cfg::MAX_TRACKS];
+    void     set_envelope(int track, int Envelope::*field, float value, int max);
     const int16_t* track_sample_[cfg::MAX_TRACKS] = {};  // buffer actuellement lu par la piste
     Voice*         voices_[cfg::MAX_TRACKS] = {};
     float          gains_[cfg::MAX_TRACKS];

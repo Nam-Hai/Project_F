@@ -168,7 +168,7 @@ int main() {
         f->feed({InputEvent::black(10), InputEvent::black(200)});
         CHECK(f->ui.view() == View::Tracks && f->sink.sent.empty(), "vue Pistes : les noires 1 à 9 ne font rien");
         f->feed({InputEvent::ok()});
-        for (int j : {0, 4, 5, 6, 7, 8}) f->feed({InputEvent::black(j), InputEvent::black_up(j)});  // 2 à 4 : réglages de la piste
+        for (int j : {0, 8}) f->feed({InputEvent::black(j), InputEvent::black_up(j)});  // 2 à 8 : réglages de la piste
         CHECK(f->ui.view() == View::Pattern && f->sink.sent.empty(), "vue Pattern : les noires sans rôle ne font rien");
 
         f->feed({InputEvent::menu(), InputEvent::black(9), InputEvent::black(4)});

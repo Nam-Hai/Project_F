@@ -110,11 +110,15 @@ public:
     int      step_pan(int track, int step) const { return tracks_[track].step_pan[step]; }  // balance de la note principale
     int      track_width(int track) const { return tracks_[track].width; }                  // largeur stéréo de la piste
     int      track_balance(int track) const { return tracks_[track].balance; }              // balance de base de la piste
+    int      track_attack(int track) const { return tracks_[track].attack; }                // enveloppe ADSR de la piste (ms)
+    int      track_decay(int track) const { return tracks_[track].decay; }
+    int      track_sustain(int track) const { return tracks_[track].sustain; }              // en %
+    int      track_release(int track) const { return tracks_[track].release; }
     int      extra_count(int track, int step) const { return tracks_[track].extra_count[step]; }
     Hit      extra_hit(int track, int step, int i) const { return tracks_[track].extra[step][i]; }
     int      quantize(int track) const { return tracks_[track].quantize; }
     // Réglage de la piste tenu dans la vue Pattern (touches noires 1 à 3) : la roue le règle, la jauge l'affiche.
-    enum class TrackSetting : uint8_t { None, Quantize, Width, Balance };
+    enum class TrackSetting : uint8_t { None, Quantize, Width, Balance, Attack, Decay, Sustain, Release };
     TrackSetting track_setting() const { return setting_; }
     int      record_phase() const { return record_phase_; }  // 0 repos, 1 pré-compte, 2 prise
     bool     can_undo_take() const { return have_snapshot_; }
@@ -151,6 +155,10 @@ private:
         uint8_t  quantize           = 0;
         int8_t   width              = 0;  // largeur stéréo de la piste, -100 (mono) .. +100 (côtés x2)
         int8_t   balance            = 0;  // balance de base de la piste, -50..50
+        uint16_t attack             = 0;                              // enveloppe ADSR de la piste : A, D, R en ms (0..2000)
+        uint16_t decay              = 0;
+        uint8_t  sustain            = 100;                            // S en %
+        uint16_t release            = cfg::ENV_DEFAULT_RELEASE_MS;
         float    gain               = 1.0f;
         float    pitch              = 1.0f;
         uint32_t last_triggers      = 0;
@@ -177,6 +185,9 @@ private:
     bool shift_step_notes(Track& t, int step, int delta);
     void adjust_track_setting(int delta);
     void on_black_up(int index);
+    static TrackSetting setting_for_key(int index);
+    void adjust_envelope(int delta);
+    void render_envelope(Canvas& c) const;
     void toggle_record();
     void apply_step_event(const StepEvent& ev);
     void undo_take();

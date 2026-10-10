@@ -43,6 +43,12 @@ struct TrackData {
     // balance de base de la piste (-50..50, combinée avec celle de chaque note au déclenchement).
     int8_t  width             = 0;
     int8_t  balance           = 0;
+
+    // Enveloppe ADSR de la piste : Attack, Decay et Release en ms (0..2000), Sustain en % (0..100).
+    uint16_t attack           = 0;
+    uint16_t decay            = 0;
+    uint8_t  sustain          = 100;
+    uint16_t release          = cfg::ENV_DEFAULT_RELEASE_MS;
 };
 
 struct LoopData {

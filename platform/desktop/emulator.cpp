@@ -213,8 +213,8 @@ public:
 
         const float black_y = y0 + ImGui::GetTextLineHeightWithSpacing();
         if (!in_keyboard) {  // étiquettes : touches de réglage de la piste (tenir + roue) et touche Clavier / Rec
-            static const char* const setting_names[3] = {"Quant", "Wide", "Bal"};
-            for (int j = 1; j <= 3; ++j) {
+            static const char* const setting_names[7] = {"Quant", "Wide", "Bal", "A", "D", "S", "R"};
+            for (int j = 1; j <= 7; ++j) {
                 const float center = x0 + keyboard::BLACK_LEFT_WHITE[j] * (white_w + spacing) + white_w + spacing * 0.5f;
                 ImGui::SetCursorPos(ImVec2(center - ImGui::CalcTextSize(setting_names[j - 1]).x * 0.5f, y0));
                 ImGui::TextDisabled("%s", setting_names[j - 1]);
@@ -231,7 +231,7 @@ public:
 
             // Hors du mode Clavier / Rec : la 10e touche y entre ; dans la vue Pattern, les touches 2 à 4
             // règlent Quantifier, Pan et Balance de la piste tant qu'elles sont tenues.
-            ImGui::BeginDisabled(!in_keyboard && j != UiController::REC_BLACK_KEY && !(in_pattern_view && j >= 1 && j <= 3));
+            ImGui::BeginDisabled(!in_keyboard && j != UiController::REC_BLACK_KEY && !(in_pattern_view && j >= 1 && j <= 7));
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.07f, 0.07f, 0.09f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.20f, 0.26f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.35f, 0.35f, 0.45f, 1.0f));
@@ -244,7 +244,7 @@ public:
             if (ImGui::IsItemActivated()) ui.handle(InputEvent::black(j));      // enfoncée
             if (ImGui::IsItemDeactivated()) ui.handle(InputEvent::black_up(j));  // relâchée
             // Touche tenue à la souris : la molette (n'importe où) tourne la roue, pour régler la piste sans lâcher.
-            if (ImGui::IsItemActive() && j >= 1 && j <= 3) {
+            if (ImGui::IsItemActive() && j >= 1 && j <= 7) {
                 wheel_acc_ += ImGui::GetIO().MouseWheel;
                 while (wheel_acc_ >= 1.0f) { turn(ui, -1); wheel_acc_ -= 1.0f; }
                 while (wheel_acc_ <= -1.0f) { turn(ui, 1); wheel_acc_ += 1.0f; }
@@ -295,7 +295,7 @@ public:
         ImGui::TextDisabled("Entree = Valider, Retour/Echap = Back, M = Menu, Tab = Mode, Espace = Play/Stop,");
         ImGui::TextDisabled("1-8 et Q W E R T Y U I = pas 1 a 16 (touches blanches du clavier).");
         ImGui::TextDisabled("Z X C V B N , . / ' = touches noires 1 a 10 (la 10e passe en mode Clavier / Rec).");
-        ImGui::TextDisabled("Vue Pattern : TENIR la touche noire 2, 3 ou 4 (souris ou clavier) + roue (molette, fleches) = Quantifier, Wide (largeur stereo), Balance de la piste.");
+        ImGui::TextDisabled("Vue Pattern : TENIR la touche noire 2, 3 ou 4 (souris ou clavier) + roue (molette, fleches) = Quantifier, Wide (largeur stereo), Balance, puis A D S R (enveloppe ADSR) de la piste.");
     }
 
     void keyboard(UiController& ui) {

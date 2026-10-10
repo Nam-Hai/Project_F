@@ -172,3 +172,11 @@ add_test(NAME balance_ui COMMAND test_balance_ui)
 add_executable(test_track_settings tests/test_track_settings.cpp)
 target_link_libraries(test_track_settings PRIVATE core)
 add_test(NAME track_settings COMMAND test_track_settings)
+
+add_executable(test_envelope tests/test_envelope.cpp)
+target_link_libraries(test_envelope PRIVATE core)
+add_test(NAME envelope COMMAND test_envelope)
+
+add_executable(test_envelope_ui tests/test_envelope_ui.cpp)
+target_link_libraries(test_envelope_ui PRIVATE core)
+add_test(NAME envelope_ui COMMAND test_envelope_ui)

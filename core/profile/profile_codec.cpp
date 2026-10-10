@@ -339,6 +339,23 @@ ProfileStatus parse_track(const Doc& d, int idx, int sample_count, TrackData& ou
         if (!as_int(d, v, cfg::PAN_MIN, cfg::PAN_MAX, b)) return ProfileStatus::BadField;
         out.balance = static_cast<int8_t>(b);
     }
+
+    struct EnvKey {
+        const char* key;
+        int         max;
+        int         dflt;
+    };
+    const EnvKey keys[4] = {{"attack", cfg::ENV_MS_MAX, 0}, {"decay", cfg::ENV_MS_MAX, 0}, {"sustain", 100, 100}, {"release", cfg::ENV_MS_MAX, cfg::ENV_DEFAULT_RELEASE_MS}};
+    int          env[4]  = {0, 0, 100, cfg::ENV_DEFAULT_RELEASE_MS};
+    for (int k = 0; k < 4; ++k) {
+        v = find(d, idx, keys[k].key);
+        if (v == BROKEN) return ProfileStatus::InvalidJson;
+        if (v != ABSENT && !as_int(d, v, 0, keys[k].max, env[k])) return ProfileStatus::BadField;
+    }
+    out.attack  = static_cast<uint16_t>(env[0]);
+    out.decay   = static_cast<uint16_t>(env[1]);
+    out.sustain = static_cast<uint8_t>(env[2]);
+    out.release = static_cast<uint16_t>(env[3]);
     return ProfileStatus::Ok;
 }
 
@@ -554,6 +571,7 @@ int ProfileCodec::write(const ProfileData& p, char* buffer, std::size_t capacity
             // Listes de valeurs par pas, seulement si elles ne sont pas toutes par défaut.
             bool custom_velocity = false, custom_pitch = false, custom_pan = false, custom_offset = false, any_extra = false;
             if (tr.quantize > cfg::QUANTIZE_MAX) w.ok = false;
+            if (tr.attack > cfg::ENV_MS_MAX || tr.decay > cfg::ENV_MS_MAX || tr.release > cfg::ENV_MS_MAX || tr.sustain > 100) w.ok = false;
             if (tr.width < cfg::WIDTH_MIN || tr.width > cfg::WIDTH_MAX || tr.balance < cfg::PAN_MIN || tr.balance > cfg::PAN_MAX) w.ok = false;
             for (int s = 0; s < cfg::MAX_STEPS; ++s) {
                 if (tr.step_offset[s] < cfg::OFFSET_MIN || tr.step_offset[s] > cfg::OFFSET_MAX) w.ok = false;
@@ -637,6 +655,22 @@ int ProfileCodec::write(const ProfileData& p, char* buffer, std::size_t capacity
             if (tr.balance != 0) {
                 w.raw(", \"balance\": ");
                 w.integer(tr.balance);
+            }
+            if (tr.attack != 0) {
+                w.raw(", \"attack\": ");
+                w.integer(tr.attack);
+            }
+            if (tr.decay != 0) {
+                w.raw(", \"decay\": ");
+                w.integer(tr.decay);
+            }
+            if (tr.sustain != 100) {
+                w.raw(", \"sustain\": ");
+                w.integer(tr.sustain);
+            }
+            if (tr.release != cfg::ENV_DEFAULT_RELEASE_MS) {
+                w.raw(", \"release\": ");
+                w.integer(tr.release);
             }
             w.raw(" }");
         }

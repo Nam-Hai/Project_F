@@ -614,7 +614,87 @@ int main() {
         CHECK(ProfileCodec::write(source, buffer, sizeof buffer) > 0, "(valeurs remises dans les bornes : l'écriture repasse)");
     }
 
-    // ----- Profil plein, tout rempli : 12 clés par piste, 3 notes supplémentaires dans chaque pas, pans extrêmes -----
+    // ----- Enveloppe ADSR de la piste : « attack », « decay », « sustain », « release » -----
+    {
+        auto count = [](const char* text, const char* what) {
+            int n = 0;
+            for (const char* p = text; (p = std::strstr(p, what)) != nullptr; ++p) ++n;
+            return n;
+        };
+        source = ProfileData{};
+        source.add_sample("a.wav");
+        source.loop_count           = 1;
+        source.loops[0].track_count = 4;
+        CHECK(source.loops[0].tracks[0].attack == 0 && source.loops[0].tracks[0].decay == 0 && source.loops[0].tracks[0].sustain == 100 &&
+                  source.loops[0].tracks[0].release == cfg::ENV_DEFAULT_RELEASE_MS,
+              "valeurs par défaut : A 0, D 0, S 100, R 5");
+        source.loops[0].tracks[1].attack  = 12;
+        source.loops[0].tracks[1].decay   = 300;
+        source.loops[0].tracks[2].sustain = 70;
+        source.loops[0].tracks[3].release = 2000;
+        source.loops[0].tracks[3].attack  = 2000;
+        source.loops[0].tracks[3].sustain = 0;
+
+        const int len = ProfileCodec::write(source, buffer, sizeof buffer);
+        CHECK(len > 0, "écriture avec enveloppes");
+        CHECK(count(buffer, "\"attack\":") == 2 && count(buffer, "\"decay\":") == 1 && count(buffer, "\"sustain\":") == 2 && count(buffer, "\"release\":") == 1,
+              "clés écrites seulement quand elles s'écartent de leur défaut");
+        CHECK(std::strstr(buffer, "\"attack\": 12") != nullptr && std::strstr(buffer, "\"sustain\": 0") != nullptr && std::strstr(buffer, "\"release\": 2000") != nullptr,
+              "valeurs en nombres");
+        CHECK(codec.parse(buffer, static_cast<std::size_t>(len), parsed) == ProfileStatus::Ok, "relecture");
+        const LoopData& lp = parsed.loops[0];
+        CHECK(lp.tracks[0].attack == 0 && lp.tracks[0].decay == 0 && lp.tracks[0].sustain == 100 && lp.tracks[0].release == cfg::ENV_DEFAULT_RELEASE_MS,
+              "piste sans enveloppe : défauts (dont Release 5)");
+        CHECK(lp.tracks[1].attack == 12 && lp.tracks[1].decay == 300 && lp.tracks[1].sustain == 100 && lp.tracks[1].release == cfg::ENV_DEFAULT_RELEASE_MS,
+              "attack et decay restitués, le reste par défaut");
+        CHECK(lp.tracks[2].sustain == 70 && lp.tracks[2].attack == 0, "sustain restitué seul");
+        CHECK(lp.tracks[3].release == 2000 && lp.tracks[3].attack == 2000 && lp.tracks[3].sustain == 0 && lp.tracks[3].decay == 0, "bornes 2000 et 0 restituées, sans se mélanger");
+        static char again[96 * 1024];
+        CHECK(ProfileCodec::write(parsed, again, sizeof again) == len && std::strcmp(again, buffer) == 0, "écriture stable");
+
+        // Une valeur égale au défaut n'est pas écrite ; un Release à 0 (coupure nette) l'est.
+        source.loops[0].tracks[1].attack = 0;
+        source.loops[0].tracks[1].decay  = 0;
+        source.loops[0].tracks[2].release = 0;
+        const int len2 = ProfileCodec::write(source, buffer, sizeof buffer);
+        CHECK(len2 > 0 && std::strstr(buffer, "\"release\": 0") != nullptr && count(buffer, "\"decay\":") == 0, "Release 0 écrit (différent du défaut 5), valeurs par défaut omises");
+        CHECK(codec.parse(buffer, static_cast<std::size_t>(len2), parsed) == ProfileStatus::Ok && parsed.loops[0].tracks[2].release == 0, "Release 0 relu");
+
+        // Anciens fichiers : défauts. Zéros et valeurs explicites acceptés.
+        CHECK(parse(doc()) == ProfileStatus::Ok && parsed.loops[0].tracks[0].release == cfg::ENV_DEFAULT_RELEASE_MS && parsed.loops[0].tracks[0].sustain == 100 &&
+                  parsed.loops[0].tracks[0].attack == 0,
+              "ancien fichier : enveloppe par défaut");
+        CHECK(parse(doc("", "", "\"attack\": 0, \"decay\": 0, \"sustain\": 100, \"release\": 5,")) == ProfileStatus::Ok && parsed.loops[0].tracks[0].release == 5,
+              "valeurs par défaut explicites");
+        CHECK(parse(doc("", "", "\"attack\": 2000, \"decay\": 2000, \"sustain\": 0, \"release\": 2000,")) == ProfileStatus::Ok &&
+                  parsed.loops[0].tracks[0].decay == 2000 && parsed.loops[0].tracks[0].sustain == 0,
+              "bornes acceptées");
+
+        // Valeurs invalides.
+        for (const char* key : {"attack", "decay", "sustain", "release"})
+            for (const char* v : {"-1", "1.5", "\"5\"", "null", "true", "[1]", "{}", "1e9"})
+                CHECK(parse(doc("", "", std::string("\"") + key + "\": " + v + ",")) == ProfileStatus::BadField, "enveloppe invalide : BadField");
+        for (const char* key : {"attack", "decay", "release"})
+            CHECK(parse(doc("", "", std::string("\"") + key + "\": 2001,")) == ProfileStatus::BadField, "temps au-dessus de 2000 ms : BadField");
+        CHECK(parse(doc("", "", "\"sustain\": 101,")) == ProfileStatus::BadField, "sustain au-dessus de 100 : BadField");
+
+        // Écriture hors bornes refusée.
+        source.loops[0].tracks[1].attack = 2001;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : attack 2001 refusé");
+        source.loops[0].tracks[1].attack  = 0;
+        source.loops[0].tracks[1].decay   = 2001;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : decay 2001 refusé");
+        source.loops[0].tracks[1].decay   = 0;
+        source.loops[0].tracks[2].release = 2001;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : release 2001 refusé");
+        source.loops[0].tracks[2].release = 5;
+        source.loops[0].tracks[2].sustain = 101;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) == -1, "écriture : sustain 101 refusé");
+        source.loops[0].tracks[2].sustain = 70;
+        CHECK(ProfileCodec::write(source, buffer, sizeof buffer) > 0, "(valeurs remises dans les bornes : l'écriture repasse)");
+    }
+
+    // ----- Profil plein, tout rempli : 16 clés par piste, 3 notes supplémentaires dans chaque pas, pans extrêmes -----
     {
         static char big[300 * 1024];
         source = ProfileData{};
@@ -629,6 +709,10 @@ int main() {
                 td.quantize   = static_cast<uint8_t>((l + t) % 101);
                 td.width      = static_cast<int8_t>(t % 2 ? -100 : 100);
                 td.balance    = static_cast<int8_t>(l % 2 ? -50 : 50);
+                td.attack     = static_cast<uint16_t>(1000 + (l + t) % 1001);  // quatre chiffres : le plus long à écrire
+                td.decay      = static_cast<uint16_t>(1000 + (l * 3 + t) % 1001);
+                td.sustain    = static_cast<uint8_t>(l % 2 ? 99 : 0);
+                td.release    = static_cast<uint16_t>(2000 - (l + t) % 1000);
                 for (int s = 0; s < cfg::MAX_STEPS; ++s) {
                     td.step_velocity[s] = static_cast<uint8_t>(1 + (l + t + s * 7) % 127);
                     td.step_pitch[s]    = static_cast<int8_t>((l + t * 3 + s) % 25 - 12);
@@ -650,7 +734,8 @@ int main() {
             for (int t = 0; same && t < cfg::MAX_TRACKS; ++t) {
                 const TrackData& a = parsed.loops[l].tracks[t];
                 const TrackData& b = source.loops[l].tracks[t];
-                same = same && a.quantize == b.quantize && a.width == b.width && a.balance == b.balance;
+                same = same && a.quantize == b.quantize && a.width == b.width && a.balance == b.balance && a.attack == b.attack && a.decay == b.decay &&
+                       a.sustain == b.sustain && a.release == b.release;
                 for (int s = 0; same && s < cfg::MAX_STEPS; ++s) {
                     same = same && a.step_offset[s] == b.step_offset[s] && a.step_velocity[s] == b.step_velocity[s] && a.step_pitch[s] == b.step_pitch[s] &&
                            a.step_pan[s] == b.step_pan[s] && a.extra_count[s] == b.extra_count[s];
@@ -689,6 +774,9 @@ int main() {
             source.loops[l].tracks[0].step_pan[7]      = -35;
             source.loops[l].tracks[0].width            = -20;
             source.loops[l].tracks[1].balance          = 15;
+            source.loops[l].tracks[0].attack           = 7;
+            source.loops[l].tracks[1].sustain          = 60;
+            source.loops[l].tracks[1].release          = 120;
             source.loops[l].tracks[1].extra_count[2]   = 2;
             source.loops[l].tracks[1].extra[2][0]      = {-10, 90, 3, 20};
             source.loops[l].tracks[1].extra[2][1]      = {12, 70, -3, -45};
@@ -732,7 +820,9 @@ int main() {
                         consistent = consistent && parsed.loops[l].tracks[t].sample < parsed.sample_count;
                         consistent = consistent && parsed.loops[l].tracks[t].quantize <= cfg::QUANTIZE_MAX &&
                                      parsed.loops[l].tracks[t].width >= cfg::WIDTH_MIN && parsed.loops[l].tracks[t].width <= cfg::WIDTH_MAX &&
-                                     parsed.loops[l].tracks[t].balance >= cfg::PAN_MIN && parsed.loops[l].tracks[t].balance <= cfg::PAN_MAX;
+                                     parsed.loops[l].tracks[t].balance >= cfg::PAN_MIN && parsed.loops[l].tracks[t].balance <= cfg::PAN_MAX &&
+                                     parsed.loops[l].tracks[t].attack <= cfg::ENV_MS_MAX && parsed.loops[l].tracks[t].decay <= cfg::ENV_MS_MAX &&
+                                     parsed.loops[l].tracks[t].release <= cfg::ENV_MS_MAX && parsed.loops[l].tracks[t].sustain <= 100;
                         for (int s = 0; s < cfg::MAX_STEPS; ++s) {
                             const TrackData& td = parsed.loops[l].tracks[t];
                             consistent = consistent && td.step_offset[s] >= cfg::OFFSET_MIN && td.step_offset[s] <= cfg::OFFSET_MAX &&

@@ -212,18 +212,25 @@ int main() {
         // Le pattern et la loop ne sont pas touchés.
         CHECK(f->ui.pattern_bits(0) == 0x0011 && !f->ui.dirty(), "jouer ne modifie ni le pattern ni la loop");
 
-        // Les autres contrôles : ignorés, sauf Play et le BPM.
+        // Les autres contrôles : la roue, Valider et Mode sont ignorés ; Menu ouvre le menu de la vue ; Play lance la prise.
         f->sink.sent.clear();
-        f->feed({InputEvent::wheel(3), InputEvent::ok(), InputEvent::menu(), InputEvent::mode()});
-        CHECK(f->sink.sent.empty() && f->ui.view() == View::Keyboard, "roue, Valider, Menu et Mode sont ignorés");
+        f->feed({InputEvent::wheel(3), InputEvent::ok(), InputEvent::mode()});
+        CHECK(f->sink.sent.empty() && f->ui.view() == View::Keyboard, "roue, Valider et Mode sont ignorés");
+        f->feed({InputEvent::menu()});
+        CHECK(f->ui.view() == View::Menu && f->ui.menu_kind() == UiController::MenuKind::Keyboard, "Menu : menu de la vue Clavier");
+        f->feed({InputEvent::back()});
+        CHECK(f->ui.view() == View::Keyboard, "Back : retour au clavier");
         f->feed({InputEvent::play()});
-        CHECK(f->sink.count(Command::Play) == 1 && f->ui.view() == View::Keyboard, "Play fonctionne pendant qu'on joue");
+        CHECK(f->sink.count(Command::StartRecord) == 1 && f->sink.count(Command::Play) == 0 && f->sink.at(0).track == 2 &&
+                  f->ui.view() == View::Keyboard,
+              "Play lance la prise sur la piste du clavier");
         f->feed({InputEvent::pot_bpm(0.0f)});
         CHECK(f->sink.count(Command::SetBpm) == 1, "le BPM aussi");
 
         // Back : retour à la vue Pattern, où les boutons de pas retrouvent leur rôle.
         f->feed({InputEvent::back()});
         CHECK(f->ui.view() == View::Pattern, "Back : retour à la vue Pattern");
+        CHECK(f->sink.count(Command::StopRecord) == 1, "quitter le clavier arrête la prise");
         f->sink.sent.clear();
         f->feed({InputEvent::step(3)});
         CHECK(f->sink.count(Command::SetStep) == 1 && f->sink.count(Command::Note) == 0 && f->ui.pattern_bits(0) == 0x0019,

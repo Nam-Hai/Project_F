@@ -6,6 +6,7 @@
 #include "../command.h"
 #include "../engine_state.h"
 #include "../hit.h"
+#include "../step_event.h"
 #include "../profile/profile_data.h"
 #include "../profile/profile_store.h"
 #include "canvas.h"
@@ -36,7 +37,7 @@
 class UiController {
 public:
     enum class View : uint8_t { Tracks, Pattern, Add, Menu, Loops, Keyboard };
-    enum class MenuKind : uint8_t { Track, Loop, LoopItem };
+    enum class MenuKind : uint8_t { Track, Loop, LoopItem, Keyboard };
     enum class EditMode : uint8_t { Edit, Velocity, Pitch, Timing };
 
     static constexpr int NAME_LEN      = 19;   // caractères du nom affiché (sans « .wav »)
@@ -67,6 +68,9 @@ public:
     // Lit le profil dans le stockage (à appeler au démarrage). false si le fichier est illisible :
     // un profil vide est alors utilisé et un message s'affiche.
     bool load_profile();
+
+    // Source des changements de pas faits par l'enregistrement (le moteur) ; sans elle, la prise n'est pas lue.
+    void set_event_source(StepEventSource* source) { events_ = source; }
 
     void handle(const InputEvent& e);
 
@@ -102,6 +106,8 @@ public:
     Hit      extra_hit(int track, int step, int i) const { return tracks_[track].extra[step][i]; }
     int      quantize(int track) const { return tracks_[track].quantize; }
     bool     editing_quantize() const { return quantize_edit_; }
+    int      record_phase() const { return record_phase_; }  // 0 repos, 1 pré-compte, 2 prise
+    bool     can_undo_take() const { return have_snapshot_; }
     const char* track_name(int track) const { return tracks_[track].name; }
     const char* track_file(int track) const { return tracks_[track].file; }
     bool     error_shown() const { return static_cast<int32_t>(error_until_ - now_ms_) > 0; }
@@ -156,6 +162,11 @@ private:
     void adjust_step_value(int delta);
     bool shift_step_notes(Track& t, int step, int delta);
     void adjust_quantize(int delta);
+    void toggle_record();
+    void apply_step_event(const StepEvent& ev);
+    void undo_take();
+    void pump_restore();
+    bool restore_command(int index, Command& out) const;
     void audition_selected_step();
     void on_play();
     void on_black(int index);
@@ -211,6 +222,7 @@ private:
     bool is_lit(const Track& t) const { return static_cast<int32_t>(t.lit_until - now_ms_) > 0; }
 
     CommandSink&           sink_;
+    StepEventSource*       events_ = nullptr;
     SampleLibrary*         library_;
     profile::ProfileStore* store_;
 
@@ -246,6 +258,17 @@ private:
     int  loops_cursor_ = 0;
     int  loops_scroll_ = 0;
     int  loop_item_    = 0;            // loop visée par le menu « Supprimer »
+
+    // Enregistrement : phase publiée par le moteur, pas du pré-compte, copie de la piste prise au lancement
+    // de la prise (pour l'annuler), pertes déjà signalées.
+    int      record_phase_   = 0;
+    int      precount_step_  = -1;
+    uint32_t lost_seen_      = 0;
+    Track    snapshot_;
+    bool     have_snapshot_  = false;
+    bool     restoring_      = false;  // la piste est remise dans l'état de la copie (commandes envoyées par paquets)
+    int      restore_next_   = 0;
+    int      restore_total_  = 0;
 
     // Chargement d'une loop, envoyé en plusieurs fois (la file de commandes est petite).
     bool         loading_       = false;

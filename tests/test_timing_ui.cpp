@@ -264,16 +264,15 @@ int main() {
         CHECK(f.ui.extra_count(0, 8) == 0 && f.ui.step_offset(0, 8) == 32 && f.ui.step_pitch(0, 8) == 0, "autres pas intacts");
     }
 
-    // ----- Affichage : boîtes décalées, points des roulements -----
+    // ----- Affichage : points des roulements -----
     {
         Fixture f;
         Canvas c;
         f.ui.render(c);  // mode Edit
-        // Pas 8 : décalage 32 -> +2 pixels ; pas 12 : -64 -> -3 pixels ; pas 4 : 10 -> +0 ; pas 0 : sur la grille.
-        CHECK(c.get_pixel(8 * 8 + 2 + 3, 24 + 3) && c.get_pixel(8 * 8 + 2, 24 + 3) && !c.get_pixel(8 * 8 + 1, 24 + 3) && lit(c, 8 * 8 + 2, 24, 7, 7) == 49,
-              "pas 8 : boîte décalée de 2 pixels vers la droite");
-        CHECK(lit(c, 12 * 8 - 3, 24, 7, 7) == 49 && !c.get_pixel(12 * 8 + 5, 24 + 3), "pas 12 : boîte décalée de 3 pixels vers la gauche");
-        CHECK(lit(c, 0, 24, 7, 7) == 49 && lit(c, 4 * 8, 24, 7, 7) == 49, "pas 0 : sur la grille ; pas 4 : décalage trop petit");
+        // Les boîtes restent sur la grille quel que soit le décalage (pas 4 : +10, pas 8 : +32, pas 12 : -64).
+        CHECK(lit(c, 0, 24, 7, 7) == 49 && lit(c, 4 * 8, 24, 7, 7) == 49 && lit(c, 8 * 8, 24, 7, 7) == 49 && lit(c, 12 * 8, 24, 7, 7) == 49,
+              "boîtes pleines sur la grille, sans décalage");
+        CHECK(!c.get_pixel(8 * 8 - 1, 24 + 3) && !c.get_pixel(12 * 8 - 1, 24 + 3) && !c.get_pixel(12 * 8 + 7, 24 + 3), "rien en dehors des cases");
         // Points : 3 notes au pas 4 (x = 32, 34, 36, sous la boîte) ; aucun ailleurs.
         CHECK(c.get_pixel(32, 32) && c.get_pixel(34, 32) && c.get_pixel(36, 32) && !c.get_pixel(38, 32) && !c.get_pixel(0, 32),
               "pas 4 : trois points (trois notes)");

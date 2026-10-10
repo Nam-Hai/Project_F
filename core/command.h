@@ -28,6 +28,9 @@ struct Command {
         StopPreview,     // coupe l'écoute et rend son buffer
         Play,            // repart du pas 0
         Stop,
+        StartRecord,     // track : pré-compte d'une mesure (lecture depuis le début, pistes muettes), puis prise sur cette piste
+        StopRecord,      // termine la prise (la lecture continue) ou annule le pré-compte
+        SetLatency,      // value = compensation de latence des frappes, en ms (0..200)
         Trigger,         // track : déclenchement immédiat (boutons)
     };
 

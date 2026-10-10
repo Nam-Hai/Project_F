@@ -107,7 +107,7 @@ void UiController::notify(const char* text) {
 // ============================================================================================
 
 void UiController::handle(const InputEvent& e) {
-    if (loading_) return;    // un chargement de loop est en cours : il se termine en un instant
+    if (loading_ || restoring_) return;    // un chargement de loop est en cours : il se termine en un instant
     error_until_ = now_ms_;  // toute action efface le message
 
     switch (e.type) {
@@ -310,6 +310,11 @@ void UiController::on_back() {
             view_    = View::Tracks;
             break;
         case View::Keyboard:
+            if (record_phase_ != 0) {  // quitter la vue arrête la prise (elle est conservée)
+                Command c;
+                c.type = Command::StopRecord;
+                sink_.push(c);
+            }
             view_ = keyboard_origin_;
             break;
         case View::Tracks:
@@ -342,6 +347,7 @@ void UiController::on_menu() {
         case View::Add:
             break;  // pas de menu dans cette vue pour l'instant
         case View::Keyboard:
+            open_menu(MenuKind::Keyboard);
             break;
     }
 }
@@ -513,6 +519,10 @@ void UiController::play_key(int pitch, int key_id) {
 }
 
 void UiController::on_play() {
+    if (view_ == View::Keyboard) {  // dans la vue Clavier, Play lance ou arrête la prise
+        toggle_record();
+        return;
+    }
     Command c;
     c.type = playing_ ? Command::Stop : Command::Play;
     if (sink_.push(c)) playing_ = !playing_;  // confirmé ensuite par update()
@@ -546,6 +556,134 @@ void UiController::on_step(int index) {
     t.pattern = static_cast<uint16_t>(on ? (t.pattern | (1u << index)) : (t.pattern & ~(1u << index)));
     step_cursor_ = index;
     mark_dirty();
+}
+
+// Play dans la vue Clavier : lance le pré-compte puis la prise sur la piste du clavier, ou termine la prise
+// (conservée). La piste est copiée au lancement : « Annuler la prise » la remet dans cet état.
+void UiController::toggle_record() {
+    Command c;
+    if (record_phase_ == 0) {
+        c.type  = Command::StartRecord;
+        c.track = tracks_[selected_].engine_track;
+        if (!sink_.push(c)) return;
+        snapshot_      = tracks_[selected_];
+        have_snapshot_ = true;
+        record_phase_  = 1;  // confirmé ensuite par update()
+    } else {
+        c.type = Command::StopRecord;
+        sink_.push(c);
+    }
+}
+
+// Le moteur a rangé une frappe dans un pas : on écrase le modèle avec l'état complet du pas.
+void UiController::apply_step_event(const StepEvent& ev) {
+    if (restoring_ || ev.step >= cfg::MAX_STEPS || ev.extra_count > cfg::MAX_EXTRA_HITS) return;
+    for (int i = 0; i < track_count_; ++i) {
+        Track& t = tracks_[i];
+        if (t.engine_track != ev.track) continue;
+        const int s       = ev.step;
+        t.pattern         = static_cast<uint16_t>(t.pattern | (1u << s));
+        t.step_offset[s]  = ev.main.offset;
+        t.step_velocity[s] = ev.main.velocity;
+        t.step_pitch[s]   = ev.main.pitch;
+        t.extra_count[s]  = ev.extra_count;
+        for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[s][e] = ev.extra[e];
+        mark_dirty();
+        return;
+    }
+}
+
+// Remet la piste du clavier dans l'état d'avant la prise : le modèle tout de suite, le moteur par paquets
+// (pump_restore).
+void UiController::undo_take() {
+    if (!have_snapshot_ || selected_ < 0 || selected_ >= track_count_) return;
+
+    if (record_phase_ != 0) {
+        Command c;
+        c.type = Command::StopRecord;
+        sink_.push(c);
+    }
+    Track& t           = tracks_[selected_];
+    t.pattern          = snapshot_.pattern;
+    t.quantize         = snapshot_.quantize;
+    for (int s = 0; s < cfg::MAX_STEPS; ++s) {
+        t.step_velocity[s] = snapshot_.step_velocity[s];
+        t.step_pitch[s]    = snapshot_.step_pitch[s];
+        t.step_offset[s]   = snapshot_.step_offset[s];
+        t.extra_count[s]   = snapshot_.extra_count[s];
+        for (int e = 0; e < cfg::MAX_EXTRA_HITS; ++e) t.extra[s][e] = snapshot_.extra[s][e];
+    }
+    snapshot_.engine_track = t.engine_track;
+
+    int extras = 0;
+    for (int s = 0; s < cfg::MAX_STEPS; ++s) extras += snapshot_.extra_count[s];
+    restore_total_ = 4 * cfg::MAX_STEPS + 2 + extras;
+    restore_next_  = 0;
+    restoring_     = true;
+    pump_restore();
+    mark_dirty();
+}
+
+// Commande numéro `index` de la remise en état : d'abord les notes supplémentaires effacées, puis chaque
+// vélocité, pitch et décalage, le pattern, la quantification, enfin les notes supplémentaires de la copie.
+bool UiController::restore_command(int index, Command& c) const {
+    c = Command{};
+    c.track = snapshot_.engine_track;
+    const int n = cfg::MAX_STEPS;
+    if (index < 0 || index >= restore_total_) return false;
+
+    if (index < n) {
+        c.type = Command::ClearExtraHits;
+        c.step = static_cast<uint8_t>(index);
+    } else if (index < 2 * n) {
+        c.type  = Command::SetStepVelocity;
+        c.step  = static_cast<uint8_t>(index - n);
+        c.value = static_cast<float>(snapshot_.step_velocity[index - n]);
+    } else if (index < 3 * n) {
+        c.type  = Command::SetStepPitch;
+        c.step  = static_cast<uint8_t>(index - 2 * n);
+        c.value = static_cast<float>(snapshot_.step_pitch[index - 2 * n]);
+    } else if (index < 4 * n) {
+        c.type  = Command::SetStepOffset;
+        c.step  = static_cast<uint8_t>(index - 3 * n);
+        c.value = static_cast<float>(snapshot_.step_offset[index - 3 * n]);
+    } else if (index == 4 * n) {
+        c.type   = Command::SetTrackPattern;
+        c.length = snapshot_.pattern;
+    } else if (index == 4 * n + 1) {
+        c.type  = Command::SetTrackQuantize;
+        c.value = static_cast<float>(snapshot_.quantize);
+    } else {
+        int k = index - (4 * n + 2);
+        for (int s = 0; s < n; ++s) {
+            if (k >= snapshot_.extra_count[s]) {
+                k -= snapshot_.extra_count[s];
+                continue;
+            }
+            const Hit& h = snapshot_.extra[s][k];
+            c.type       = Command::SetExtraHit;
+            c.step       = static_cast<uint8_t>(s);
+            c.slot       = static_cast<uint8_t>(k + 1);
+            c.offset     = h.offset;
+            c.value      = static_cast<float>(h.velocity);
+            c.pitch      = h.pitch;
+            return true;
+        }
+        return false;
+    }
+    return true;
+}
+
+void UiController::pump_restore() {
+    while (restoring_) {
+        Command c;
+        if (!restore_command(restore_next_, c)) {
+            restoring_ = false;
+            break;
+        }
+        if (!sink_.push(c)) break;
+        ++restore_next_;
+    }
 }
 
 void UiController::on_pot_bpm(float v) {
@@ -583,7 +721,7 @@ void UiController::close_menu() {
 }
 
 int UiController::menu_item_count() const {
-    return menu_kind_ == MenuKind::LoopItem ? 2 : menu_kind_ == MenuKind::Track ? 4 : 3;
+    return menu_kind_ == MenuKind::LoopItem || menu_kind_ == MenuKind::Keyboard ? 2 : menu_kind_ == MenuKind::Track ? 4 : 3;
 }
 
 void UiController::on_menu_ok() {
@@ -614,6 +752,11 @@ void UiController::on_menu_ok() {
             } else {
                 close_menu();
             }
+            break;
+
+        case MenuKind::Keyboard:
+            if (menu_cursor_ == 0) undo_take();
+            close_menu();
             break;
 
         case MenuKind::LoopItem:
@@ -997,7 +1140,19 @@ void UiController::update(const EngineState& s, uint32_t now_ms) {
     bpm_       = static_cast<int>(std::lround(s.bpm.load()));
     play_step_ = playing_ ? s.step.load() : -1;
 
+    record_phase_  = s.record_phase.load();
+    precount_step_ = s.precount_step.load();
     pump_load();
+    pump_restore();
+    if (events_) {
+        StepEvent ev;
+        while (events_->pop_step_event(ev)) apply_step_event(ev);
+    }
+    const uint32_t lost = s.record_lost.load();
+    if (lost != lost_seen_) {
+        lost_seen_ = lost;
+        notify(" Frappes perdues");
+    }
 
     if (audition_pending_) {
         if (view_ == View::Pattern && edit_mode_ != EditMode::Edit && step_cursor_ >= 0) audition_selected_step();
@@ -1043,7 +1198,8 @@ void UiController::render(Canvas& c) const {
             char title[17];
             if (menu_kind_ == MenuKind::Track) std::snprintf(title, sizeof title, "%s", tracks_[selected_].name);
             else if (menu_kind_ == MenuKind::Loop) std::snprintf(title, sizeof title, "Loop");
-            else std::snprintf(title, sizeof title, "Loop %d", loop_item_ + 1);
+            else if (menu_kind_ == MenuKind::LoopItem) std::snprintf(title, sizeof title, "Loop %d", loop_item_ + 1);
+            else std::snprintf(title, sizeof title, "%s", tracks_[selected_].name);
             render_header(c, title, false);
             render_menu(c);
             break;
@@ -1053,7 +1209,7 @@ void UiController::render(Canvas& c) const {
             render_loops(c);
             break;
         case View::Keyboard:
-            render_header(c, tracks_[selected_].name, false);
+            render_header(c, tracks_[selected_].name, false, 0, record_phase_ != 0 ? 8 : 16);
             render_keyboard(c);
             break;
     }
@@ -1133,22 +1289,19 @@ void UiController::render_pattern(Canvas& c) const {
         const int  x  = i * 8;
         const bool on = (t.pattern >> i) & 1u;
 
-        // Un pas joué est dessiné décalé de son micro-timing (3 pixels au plus) ; un pas éteint reste sur la grille.
-        const int o  = t.step_offset[i];
-        const int bx = x + (on ? (o * 3 + (o < 0 ? -32 : 32)) / 64 : 0);
 
         if (edit_mode_ == EditMode::Edit || edit_mode_ == EditMode::Timing || !on) {
-            c.rect(bx, Y, 7, 7, on && edit_mode_ != EditMode::Velocity && edit_mode_ != EditMode::Pitch);  // plein = joué, contour = silence
+            c.rect(x, Y, 7, 7, on && edit_mode_ != EditMode::Velocity && edit_mode_ != EditMode::Pitch);  // plein = joué, contour = silence
         } else if (edit_mode_ == EditMode::Velocity) {
-            c.rect(bx, Y, 7, 7, false);
+            c.rect(x, Y, 7, 7, false);
             const int rows = 1 + ((t.step_velocity[i] - cfg::VELOCITY_MIN) * 4 + 63) / 126;  // 1..5
-            c.rect(bx + 1, Y + 6 - rows, 5, rows, true);
+            c.rect(x + 1, Y + 6 - rows, 5, rows, true);
         } else {
-            c.rect(bx, Y, 7, 7, false);
+            c.rect(x, Y, 7, 7, false);
             const int p    = t.step_pitch[i];
             const int rows = ((p < 0 ? -p : p) * 2 + 6) / 12;  // 0..2
-            if (p >= 0) c.rect(bx + 1, Y + 3 - rows, 5, rows + 1, true);  // la ligne centrale, plus vers le haut
-            else        c.rect(bx + 1, Y + 3, 5, rows + 1, true);         // la ligne centrale, plus vers le bas
+            if (p >= 0) c.rect(x + 1, Y + 3 - rows, 5, rows + 1, true);  // la ligne centrale, plus vers le haut
+            else        c.rect(x + 1, Y + 3, 5, rows + 1, true);         // la ligne centrale, plus vers le bas
         }
         // Un pas à plusieurs notes (roulement) : un petit point par note sous la boîte.
         if (on) {
@@ -1252,6 +1405,11 @@ void UiController::render_menu(Canvas& c) const {
             labels[1] = confirm_ ? " Ecraser ?" : " Sauvegarder la loop";
             labels[2] = " Annuler";
             break;
+        case MenuKind::Keyboard:
+            labels[0] = " Annuler la prise";
+            labels[1] = " Annuler";
+            count     = 2;
+            break;
         case MenuKind::LoopItem:
             labels[0] = confirm_ ? " Confirmer ?" : " Supprimer la loop";
             labels[1] = " Annuler";
@@ -1322,6 +1480,25 @@ void UiController::render_keyboard(Canvas& c) const {
         const bool down = (pressed == keyboard::WHITE_KEYS + j);
         c.rect(x0, TOP, BLACK_W, BLACK_H, true, true);
         if (down) c.rect(x0 + 1, TOP + 1, BLACK_W - 2, BLACK_H - 2, true, false);
+    }
+
+    // Enregistrement : l'indicateur à côté du titre, puis la rangée du temps.
+    if (record_phase_ == 1) {
+        // Décompte des temps restants : 4 pendant le premier temps du pré-compte, puis 3, 2, 1.
+        const int beats_left = precount_step_ < 0 ? 4 : 4 - precount_step_ / 4;
+        char      text[8];
+        std::snprintf(text, sizeof text, "PRE %d", beats_left);
+        c.text(54, 0, text, true);
+    } else if (record_phase_ == 2) {
+        c.text(54, 0, "REC", true);
+    }
+    if (record_phase_ != 0) {
+        // 16 cases : pleine = pas qui porte une note ; un trait dessous marque le pas en cours.
+        const Track& t = tracks_[selected_];
+        for (int i = 0; i < cfg::MAX_STEPS; ++i) {
+            c.rect(i * 8, 54, 7, 5, (t.pattern >> i) & 1u);
+            if (i == play_step_) c.rect(i * 8, 60, 7, 2, true);
+        }
     }
 }
 

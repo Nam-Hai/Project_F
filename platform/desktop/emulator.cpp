@@ -148,7 +148,7 @@ public:
     explicit FakeHardwareView(float initial_pot) : pot_(initial_pot) {}
 
     // Les LED des boutons de pas lisent l'état du moteur et l'UI, comme le feraient de vraies LED.
-    void draw(UiController& ui, const EngineState& state) {
+    void draw(UiController& ui, const EngineState& state, CommandSink& sink) {
         // Roue : un slider rotatif. Le glisser émet la différence en crans ; la molette de la souris
         // (ou les flèches) le fait tourner en continu, avec retour au début en bout de course.
         ImGui::AlignTextToFramePadding();
@@ -188,6 +188,15 @@ public:
         if (SliderFloatWheel("##bpm", &pot_, 0.0f, 1.0f, "", bpm_notch)) ui.handle(InputEvent::pot_bpm(pot_));
         ImGui::SameLine();
         ImGui::Text("%d", ui.bpm());
+
+        // Compensation de latence de l'enregistrement : retirée de chaque frappe (carte son + écran + clavier de
+        // l'ordinateur). Réglée en jouant en rythme avec le pré-compte : trop faible, les notes tombent en retard.
+        if (!latency_sent_) latency_sent_ = send_latency(sink);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Latence");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(420);
+        if (SliderIntWheel("##latency", &latency_ms_, 0, 200, "%d ms", 1)) send_latency(sink);
 
         ImGui::Spacing();
 
@@ -292,7 +301,19 @@ private:
         ui.handle(InputEvent::wheel(delta));
     }
 
+    bool send_latency(CommandSink& sink) {
+        Command c;
+        c.type  = Command::SetLatency;
+        c.value = static_cast<float>(latency_ms_);
+        return sink.push(c);
+    }
+
+    // Défaut : deux périodes de la carte son (128 échantillons) plus un peu de lecture des touches ; à ajuster à l'oreille.
+    static constexpr int DEFAULT_LATENCY_MS = 30;
+
     float pot_;
+    int   latency_ms_   = DEFAULT_LATENCY_MS;
+    bool  latency_sent_ = false;
     int   wheel_pos_ = WHEEL_STEPS / 2;
     float wheel_acc_ = 0.0f;
 };
@@ -305,6 +326,7 @@ int main() {
     DesktopSampleLibrary library(SAMPLES_DIR, bank);
     FileProfileStore     store(std::string(PROFILES_DIR) + "/default.json");
     UiController         ui(engine, &library, &store);
+    ui.set_event_source(&engine);
     DesktopAudio         audio;  // détruit avant le moteur et les buffers
 
     // La machine démarre sur une loop vide ; les loops sauvegardées sont dans le profil.
@@ -346,7 +368,7 @@ int main() {
             // 1. Les contrôles produisent des événements...
             controls_window.begin_frame("controles");
             hardware.keyboard(ui);
-            hardware.draw(ui, engine.state());
+            hardware.draw(ui, engine.state(), engine);
             controls_window.end_frame();
 
             // 2. ...l'UI se met à jour et dessine...

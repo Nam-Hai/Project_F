@@ -148,3 +148,11 @@ add_test(NAME timing COMMAND test_timing)
 add_executable(test_timing_ui tests/test_timing_ui.cpp)
 target_link_libraries(test_timing_ui PRIVATE core)
 add_test(NAME timing_ui COMMAND test_timing_ui)
+
+add_executable(test_record tests/test_record.cpp)
+target_link_libraries(test_record PRIVATE core)
+add_test(NAME record COMMAND test_record)
+
+add_executable(test_record_ui tests/test_record_ui.cpp)
+target_link_libraries(test_record_ui PRIVATE core)
+add_test(NAME record_ui COMMAND test_record_ui)

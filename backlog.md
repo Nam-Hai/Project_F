@@ -20,13 +20,7 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 ## Prêt maintenant
 *(à jour au 11/10/2026)*
 - **B-001** Commander le matériel (utilisateur, priorité 1)
-- **B-060** Reprise de la carte SD (`.tmp` / `.bak` + CRC) (priorité 1)
-- **B-022** Arène de samples (`SampleArena`) (priorité 1)
 - **B-025** `SampleLibrary` à chemins relatifs (priorité 3)
-- **B-030** Fonction « afficher ce Canvas » isolée (priorité 2)
-- **B-040** Protocole d'événements de la télécommande (priorité 2)
-- **B-070** Journal d'erreurs sur la carte (priorité 3)
-- **B-080** Série de scénarios de charge (priorité 2)
 
 ---
 
@@ -90,24 +84,29 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 
 
 ### B-022 Arène de samples (`SampleArena`)
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core
+- statut: parked · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core, en-attente-de-la-carte
 - dépend de: B-020
-- références: plan_teensy.md#T6
-- terminé quand: bloc de mémoire unique dans `core/`, curseur remis à zéro à l'ouverture d'une loop, refus propre quand il est plein, tests (dont débordement).
-- à rediscuter (11/10/2026) : le choix « classe seule d'abord (A) » ou « branchée tout de suite sur l'émulateur (B) » n'est pas tranché ; l'utilisateur n'a pas bien compris l'enjeu et veut en reparler plus longuement avant de commencer.
-
+- références: plan_teensy.md#T6 (point 3c) ; B-029
+- terminé quand: (à redéfinir après la décision de B-029) un bloc de mémoire pour les samples d'une loop dans `core/`, remis à zéro à l'ouverture d'une loop, refus propre quand il est plein, tests (dont débordement).
+- **mise en attente (11/10/2026, décision de l'utilisateur)** : le chantier est reporté jusqu'à ce que la Teensy soit disponible, parce que le choix de structure dépend de mesures sur la carte (coût CPU d'une lecture de sample par blocs dans `SamplePlayer`, vitesse de lecture de la carte SD, temps de copie en PSRAM). L'émulateur fonctionne sans arène (`std::vector`) et rien ne bloque.
+- options discutées le 11/10/2026 : (1) **arène** (blocs rangés à la suite, remise à zéro à chaque ouverture de loop ; remplacer un sample laisse un trou ; quand la mémoire est pleine à cause des trous, compactage en **rechargeant depuis la carte** : `ClearAll`, `reset()`, rechargement des pistes depuis le modèle de l'interface ; silence de la durée d'un chargement, demandé à l'utilisateur (« Memoire pleine, compacter ? ») ; récupère le dernier bloc alloué en reculant le curseur) ; (2) **blocs chaînés** (idée de l'utilisateur, famille FAT / LFS : blocs de taille fixe, chaque sample est une chaîne de blocs, plus aucun trou ni compactage ; coût : `SamplePlayer` doit lire par tronçons avec interpolation entre deux blocs, avec un coût CPU à mesurer ; `SampleReader` écrit déjà bloc par bloc sans changement) ; (3) tas à blocs libres (réduit les trous sans les supprimer, écarté) ; (4) emplacements fixes de 1 Mo par piste (écarté : un 808 fait environ 3 Mo). Avec des samples d'environ 3 Mo, deux remplacements de gros samples saturent 16 Mo, donc le problème des trous est réel.
+- découpage envisagé si l'arène est retenue : (a) la classe `SampleArena` seule dans `core/` (allouer, remettre à zéro, capacité, alignement sur 4 octets, « plein » proprement, annuler la dernière allocation) ; (b) confirmation du moteur après `ClearAll` (B-023 ; la file `released_` pourrait suffire comme signal) ; (c) branchement de l'émulateur (arène de 16 Mo, `reset()` à l'entrée dans la vue Loops une fois le moteur confirmé) ; (d) l'édition : ajout et remplacement d'un sample dans une loop ouverte, trous, compactage sur demande ; (e) partage des samples identiques et zone d'écoute séparée (B-024) ; (f) le côté Teensy (bloc de PSRAM), dans B-107.
 
 ### B-023 Confirmation du moteur après `ClearAll`
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core
+- statut: parked · priorité: 1 · propriétaire: claude · étiquettes: phase-0, samples, core, en-attente-de-la-carte
 - dépend de: B-022
 - références: plan_teensy.md#T6 ; core/engine.*
 - terminé quand: un compteur dans `EngineState` confirme que le moteur a traité `ClearAll` avant la remise à zéro de l'arène ; test où une lecture en cours ne lit jamais de mémoire réécrite.
+- mise en attente avec B-022 (11/10/2026) : la structure mémoire des samples est rouverte (voir B-022 et B-029).
+
 
 ### B-024 Partage des samples identiques et zone d'écoute
-- statut: todo · priorité: 3 · propriétaire: claude · étiquettes: phase-0, samples
+- statut: parked · priorité: 3 · propriétaire: claude · étiquettes: phase-0, samples, en-attente-de-la-carte
 - dépend de: B-022
 - références: plan_teensy.md#T6
 - terminé quand: deux pistes qui utilisent le même fichier n'occupent la mémoire qu'une fois ; la prévisualisation utilise une zone séparée et tronquée.
+- mise en attente avec B-022 (11/10/2026) : le partage des samples identiques et la zone d'écoute dépendent de la structure mémoire retenue (voir B-029).
+
 
 ### B-025 `SampleLibrary` à chemins relatifs
 - statut: todo · priorité: 3 · propriétaire: claude · étiquettes: phase-0, samples
@@ -139,23 +138,36 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - vérifié (11/10/2026) : `UiController::load_loop` garde toutes les pistes : celle dont le sample est introuvable, illisible ou au mauvais format est chargée sans son (`Track::missing`), avec le nom du sample du profil, son pattern et tous ses réglages ; ses commandes partent comme celles des autres (`SetTrackSample` sans données, ignorée par le moteur : il n'y a rien à jouer, et le moteur n'allume pas l'indicateur de jeu) ; seule exception, un index de sample hors de la table du profil (que les codecs ne produisent pas) écarte la piste. Un « ? » s'affiche à droite de la ligne dans la liste des pistes, à la place du carré de jeu (inversé quand la ligne est sélectionnée). « Changer le sample » donne un son et retire le « ? » ; la sauvegarde garde le nom d'origine tant que rien n'est remplacé (profil relu : `hat.wav` conservé) ; si le fichier revient, la loop se recharge normalement à la réouverture. Moteur vérifié de bout en bout (`test_integration`) : la piste manquante est silencieuse, la piste remplacée joue à son pas, la loop rechargée avec le fichier revenu est identique à l'originale. Tests : `test_loops` (pistes gardées, commandes, nom, « ? » affiché et inversé, modifications d'un pas / vélocité / gain envoyées à la bonne piste du moteur, sauvegarde, remplacement, fichier revenu, nombre de canaux transmis, index hors table), `test_integration` mis à jour. ASan et UBSan propres. Mutations : 15 changements du nouveau code, 4 survivants au premier tour corrigés par de nouveaux tests : 15 sur 15 tuées. Les 28 tests passent ; compilation Teensy sans avertissement. Pas de « ? » dans l'en-tête de la vue Pattern (seulement dans la liste des pistes).
 
 
+### B-029 Choisir la structure mémoire des samples (après mesures sur la carte)
+- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-1, samples, audio, matériel
+- dépend de: B-104, B-107
+- références: plan_teensy.md#T6 (point 3c) ; B-022, B-023, B-024
+- terminé quand: les trois mesures sont faites sur la carte (coût CPU d'une lecture de sample par blocs comparé à la lecture contiguë ; vitesse de lecture de la carte SD en Mo/s ; temps de copie de 12 Mo en PSRAM) et la décision est écrite dans `plan_teensy.md` T6 : arène avec compactage par rechargement, ou blocs chaînés (ou autre). B-022, B-023 et B-024 sont alors réécrites et rendues prêtes selon ce choix.
+
 ### B-030 Fonction « afficher ce Canvas »
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui
+- statut: done · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui
 - dépend de: —
 - références: plan_teensy.md#T4 ; platform/desktop/emulator.cpp
 - terminé quand: l'affichage d'un `Canvas` 128×64 est isolé derrière une fonction de plateforme (celle de l'émulateur d'abord), prête à recevoir le pilote SSD1309.
+- **supprimée / absorbée (11/10/2026, décision de l'utilisateur)** : pas de travail à faire ici. L'émulateur a déjà sa fonction d'affichage (`ScreenView::draw`) et le `Canvas` a déjà le format du SSD1306 (`data()` donne les 1 024 octets prêts à partir). L'interface `Display` (« afficher ce Canvas ») sera dessinée avec le pilote SSD1309 sous les yeux, dans **B-101** ; la détection de changement du `Canvas` (ne renvoyer l'image que si elle a changé, T4) est notée dans B-102.
+
 
 ### B-040 Protocole d'événements de la télécommande
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui, core
+- statut: parked · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui, core, en-attente-de-la-carte
 - dépend de: —
 - références: plan_teensy.md#T16
 - terminé quand: format d'événement (type, index, valeur) dans `core/`, codage et décodage testés ; choix du transport (série ou MIDI USB) noté dans `plan_teensy.md`.
+- **mise en attente (11/10/2026, décision de l'utilisateur)** : reportée jusqu'à ce que la Teensy soit disponible : le protocole est simple et ce sont les essais sur la carte (comportement du port série USB, type d'USB) qui le confirmeront.
+- **proposition discutée, non tranchée** : (1) transport **USB série** (flux bidirectionnel, port `/dev/cu.usbmodem…` ouvert en POSIX côté Mac, cohabite avec l'audio USB dans « Série + MIDI + Audio » de T14) plutôt que MIDI USB (messages de 3 octets, CoreMIDI, conventions musicales sans rapport) ; (2) format en **lignes de texte**, une par événement (`wheel 1`, `ok`, `back`, `menu`, `mode`, `play`, `step 5`, `black 3`, `blackup 3`, `pot 0.4375`), pour pouvoir taper un événement à la main dans un terminal série et lire ce qui circule, USB garantissant déjà l'intégrité des octets ; (3) seulement des événements de l'ordinateur vers la Teensy au départ, le retour de l'image de l'écran (1 024 octets par changement) étant une tâche ultérieure ; (4) dans `core/` : une fonction qui écrit un `InputEvent` en ligne, un lecteur d'octets au fil de l'eau qui reconstitue les lignes et rend des événements ; tests : tous les types, lignes coupées en morceaux, `\r\n` et `\n`, lignes inconnues ou trop longues ignorées sans bloquer le flux, valeurs hors limites, lignes vides, bruit aléatoire.
+
 
 ### B-041 Émulateur : option « envoyer à la Teensy »
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui
+- statut: parked · priorité: 2 · propriétaire: claude · étiquettes: phase-0, ui, en-attente-de-la-carte
 - dépend de: B-040
 - références: plan_teensy.md#T16
 - terminé quand: l'émulateur peut envoyer ses événements par le transport choisi (testé en boucle locale tant qu'il n'y a pas de carte).
+- mise en attente avec B-040 (11/10/2026).
+
 
 ### B-050 Installer PlatformIO
 - statut: done · priorité: 2 · propriétaire: utilisateur (confirmé le 10/10/2026) · étiquettes: phase-0, outillage
@@ -186,30 +198,40 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - vérifié: mesures de `teensy_size` pour le programme minimal (moteur + interface, sans matériel) : FLASH code 62 Ko, données 11 Ko ; RAM1 variables 100 Ko (moteur ~19 Ko + interface ~68 Ko avec le profil + tampons + Arduino), code en ITCM 59 Ko, 359 Ko libres pour les variables locales ; RAM2 12 Ko utilisés, **512 Ko libres pour l'arène de samples** (en plus des 16 Mo de PSRAM). Le moteur et l'interface tiennent largement.
 
 ### B-060 Reprise de la carte SD (`.tmp` / `.bak` + CRC)
-- statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-0, sd, profil, core
+- statut: parked · priorité: 1 · propriétaire: claude · étiquettes: phase-0, sd, profil, core, en-attente-de-la-carte
 - dépend de: B-010
 - références: plan_teensy.md#T10
 - terminé quand: séquence d'écriture `.tmp` puis `.bak` puis principal, reprise au démarrage sur le fichier dont le CRC est valide, écrite dans `core/` et testée sur le Mac avec des fichiers tronqués à chaque étape.
+- **mise en attente (11/10/2026, décision de l'utilisateur)** : reporté jusqu'à ce que la Teensy soit disponible. Raison : l'interface de fichiers que la logique utiliserait (ouvrir, lire, écrire, renommer, supprimer, tester l'existence) est à ajuster sur la vraie bibliothèque de la carte SD ; en attendant, `FileProfileStore` du Mac écrit déjà par « .tmp » puis renommage avec copie en « .bak » (mais sa lecture ne regarde que le fichier principal).
+- **proposition discutée, non tranchée** (à reprendre avec la carte) : (1) mettre la logique dans `core/` derrière une petite interface de fichiers, branchée sur `std::filesystem` au Mac et sur la carte SD sur la Teensy ; (2) test central : un faux système de fichiers en mémoire qui simule une **coupure après chaque opération** de l'écriture, puis relance la lecture, qui doit toujours rendre un profil complet (ancien ou nouveau) ; (3) ordre de lecture : T10 prévoyait principal, `.tmp`, `.bak` ; un `.tmp` complet et valide encore présent est toujours **plus récent** que le principal (coupure entre l'écriture du `.tmp` et le renommage), donc l'ordre **`.tmp`, principal, `.bak`** est préférable ; (4) la lecture signale « restauré » (message d'interface dans B-061) et ne réécrit pas le principal pendant le chargement (la carte est peut-être défaillante).
+
 
 ### B-061 Messages et action « Recharger la carte »
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, sd, ui
+- statut: parked · priorité: 2 · propriétaire: claude · étiquettes: phase-0, sd, ui, en-attente-de-la-carte
 - dépend de: B-060
 - références: plan_teensy.md#T10
 - terminé quand: « Pas de carte » et « Echec sauvegarde » s'affichent dans les cas prévus ; une ligne « Recharger la carte » dans le menu de la loop relance l'initialisation ; tests d'interface.
+- mise en attente avec B-060 (11/10/2026) : elle dépend du résultat de lecture de B-060 (« restauré ») et de la détection d'une carte absente, qui se règle avec la carte.
+
 
 ### B-070 Journal d'erreurs sur la carte
-- statut: todo · priorité: 3 · propriétaire: claude · étiquettes: phase-0, sd, core
+- statut: parked · priorité: 3 · propriétaire: claude · étiquettes: phase-0, sd, core, en-attente-de-la-carte
 - dépend de: —
 - références: plan_teensy.md#T14
 - terminé quand: file d'événements en mémoire, écriture de `log.txt` par la boucle principale (jamais depuis l'audio), 64 Ko au plus avec `log.old`, événements listés dans T14 ; tests sur le Mac avec un faux stockage.
+- mise en attente (11/10/2026, décision de l'utilisateur) : reporté jusqu'à ce que la Teensy soit disponible (le journal s'écrit sur la carte SD).
+
 
 ### B-080 Série de scénarios de charge
-- statut: todo · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage
+- statut: parked · priorité: 2 · propriétaire: claude · étiquettes: phase-0, outillage, en-attente-de-la-carte
 - dépend de: —
 - références: plan_teensy.md#T13, #T1 ; tools/bench_engine.cpp
 - terminé quand: `bench_engine` exécute des scénarios de charge croissante (8 pistes stéréo à 40 lectures, 16 pistes à 40, 16 pistes à 80, avec et sans pitch, avec et sans queues de release) et affiche la moyenne et le pire bloc de chacun ; le même code est prêt à tourner sur la carte.
 
 ## Phase 1 : mise en route sur la carte (une inconnue à la fois)
+- idée ajoutée (11/10/2026) : une variante optionnelle du banc où `SamplePlayer` lit un sample réparti par blocs, pour estimer le surcoût d'une lecture par blocs (relatif, sur le Mac), en préparation de B-029.
+- mise en attente (11/10/2026, décision de l'utilisateur) : reportée jusqu'à ce que la Teensy soit disponible (la comparaison Mac / carte se fait avec la carte).
+
 
 ### B-100 Clignotement et liaison série
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, matériel, outillage
@@ -222,12 +244,14 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - dépend de: B-100
 - références: plan_teensy.md#T4
 - terminé quand: le pilote SSD1309 maison (SPI) affiche un motif de test sur l'écran.
+- ajouté (11/10/2026, suite à B-030) : concevoir à ce moment l'interface commune « afficher ce `Canvas` » (`Display::show`), avec le pilote sous les yeux (image entière ou page par page, initialisation, contraste), puis l'implémenter dans l'émulateur et dans le pilote.
 
 ### B-102 `UiController` sur l'écran
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, ui
-- dépend de: B-101, B-030
+- dépend de: B-101
 - références: plan_teensy.md#T4
 - terminé quand: le `Canvas` rendu par `UiController` s'affiche à l'écran, identique à l'émulateur.
+- ajouté (11/10/2026, suite à B-030) : ne renvoyer l'image à l'écran que si le `Canvas` a changé (T4) : petite classe de détection de changement dans `core/`, testable sur le Mac.
 
 ### B-103 Audio par USB, pattern fixe
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, audio
@@ -253,17 +277,19 @@ Suivi des tâches. **Les décisions (pourquoi, comment, ce qu'on a écarté) son
 - références: plan_teensy.md#T16
 - terminé quand: l'émulateur commande la Teensy, qui met à jour son écran et son son.
 
-### B-107 Carte SD : samples dans l'arène en PSRAM
+### B-107 Carte SD : samples en PSRAM (première version simple)
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, sd, samples
-- dépend de: B-021, B-022, B-023, B-100
-- références: plan_teensy.md#T6, #T10
-- terminé quand: une loop dont les samples sont sur la carte SD est chargée dans la PSRAM et jouée ; le temps de chargement est relevé.
+- dépend de: B-021, B-100
+- références: plan_teensy.md#T6, #T10 ; B-029
+- terminé quand: une loop dont les samples sont sur la carte SD est chargée dans la PSRAM (avec `wav::SampleReader`) et jouée, avec une première structure **très simple** (les samples rangés à la suite dans un bloc de PSRAM, remis à zéro à l'ouverture d'une loop) en attendant la décision de B-029 ; le temps de chargement et la vitesse de lecture de la carte (Mo/s) sont relevés pour B-029.
 
 ### B-108 Profil binaire sur la carte SD
 - statut: todo · priorité: 1 · propriétaire: claude · étiquettes: phase-1, sd, profil
 - dépend de: B-060, B-107
 - références: plan_teensy.md#T10, #T7
 - terminé quand: sauvegarde et chargement du profil sur la carte, y compris la reprise après une coupure simulée pendant l'écriture.
+- note (11/10/2026) : B-060 est en attente ; elle redevient prête quand la carte est là, et se fait alors avec B-108.
+
 
 ### B-109 Réévaluer le choix de la carte
 - statut: todo · priorité: 2 · propriétaire: utilisateur · étiquettes: phase-1, matériel
